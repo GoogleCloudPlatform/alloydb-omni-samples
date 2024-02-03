@@ -1,0 +1,2656 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+  name: dbclusters.alloydbomni.dbadmin.goog
+spec:
+  group: alloydbomni.dbadmin.goog
+  names:
+    kind: DBCluster
+    listKind: DBClusterList
+    plural: dbclusters
+    shortNames:
+    - aood
+    singular: dbcluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.primary.endpoint
+      name: PrimaryEndpoint
+      type: string
+    - jsonPath: .status.primary.phase
+      name: PrimaryPhase
+      type: string
+    - jsonPath: .status.phase
+      name: DBClusterPhase
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: DBCluster is the Schema for the dbclusters API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: DBClusterSpec defines the desired state of DBCluster
+            properties:
+              allowExternalIncomingTraffic:
+                default: false
+                type: boolean
+              availability:
+                description: Availability contains adjustable settings for DbCluster
+                  HA features
+                properties:
+                  enableAutoFailover:
+                    default: true
+                    description: EnableAutoFailover means this DBCluster will trigger
+                      a failover if it detects the primary is unhealthy and standby
+                      is healthy. This will only happen if HA is enabled and the standby
+                      is healthy.
+                    type: boolean
+                  numberOfStandbys:
+                    default: 0
+                    description: NumberOfStandbys is the number of standbys that should
+                      be created for this dbcluster.
+                    minimum: 0
+                    type: integer
+                type: object
+              controlPlaneAgentsVersion:
+                description: ControlPlaneAgentsVersion is the control plane agents
+                  version provided by users.
+                type: string
+              databaseImage:
+                description: DatabaseImage is the path of the customized database
+                  image provided by users.
+                type: string
+              databaseVersion:
+                description: DatabaseVersion is the database version provided by users.
+                type: string
+              isDeleted:
+                default: false
+                description: Indicate if a DBCluster object is soft-deleted. The default
+                  is false.
+                type: boolean
+              mode:
+                description: Indicate the mode of this DBCluster.
+                enum:
+                - ""
+                - disasterRecovery
+                type: string
+              primaryCluster:
+                type: string
+              primarySpec:
+                description: InstanceSpec defines the desired state of AlloyDBOmniInstance
+                properties:
+                  adminUser:
+                    description: AdminUser represents the admin user specification
+                    properties:
+                      passwordRef:
+                        description: PasswordRef is the name of the secret containing
+                          the admin user's password. This value will be used during
+                          initial provisioning or password reset to set the admin
+                          user to that password. The secret must be under the same
+                          project as the Database cluster.
+                        properties:
+                          name:
+                            description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              TODO: Add other useful fields. apiVersion, kind, uid?'
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    type: object
+                  allowExternalIncomingTrafficToInstance:
+                    default: false
+                    description: AllowExternalIncomingTrafficToInstance will be used
+                      to configure the external LB creation.
+                    type: boolean
+                  auditLogTarget:
+                    description: AuditLogTarget configures the sink for the database
+                      audit logs
+                    properties:
+                      syslog:
+                        properties:
+                          certsSecretRef:
+                            description: CertsSecretRef contains the certificates
+                              to be used for the TLS connection to syslog server
+                            properties:
+                              name:
+                                description: name is unique within a namespace to
+                                  reference a secret resource.
+                                type: string
+                              namespace:
+                                description: namespace defines the space within which
+                                  the secret name must be unique.
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          host:
+                            description: Host is the syslog server FQDN or IP address
+                            type: string
+                        required:
+                        - certsSecretRef
+                        - host
+                        type: object
+                    type: object
+                  availabilityOptions:
+                    description: AvailabilityOptions contains adjustable settings
+                      for HA features
+                    properties:
+                      livenessProbe:
+                        default: Enabled
+                        description: LivenessProbe
+                        enum:
+                        - Enabled
+                        - Disabled
+                        - OpDisabled
+                        type: string
+                    type: object
+                  databasePatchingTimeout:
+                    description: Max threshold for database patching. This timeout
+                      is used independently for sts patching and OPatch/datapatch
+                      execution.
+                    type: string
+                  dbLoadBalancerOptions:
+                    description: DBNetworkServiceOptions allows to override some details
+                      of kubernetes Service created to expose a connection to database.
+                    properties:
+                      gcp:
+                        description: GCP contains Google Cloud specific attributes
+                          for the Kubernetes LoadBalancer.
+                        properties:
+                          loadBalancerIP:
+                            description: LoadBalancerIP is a static IP address, see
+                              https://cloud.google.com/compute/docs/ip-addresses/reserve-static-external-ip-address
+                            type: string
+                          loadBalancerType:
+                            description: A LoadBalancer can be internal or external.
+                              See https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
+                            enum:
+                            - ""
+                            - Internal
+                            - External
+                            type: string
+                        type: object
+                    type: object
+                  features:
+                    description: Feature Spec
+                    properties:
+                      googleMLExtension:
+                        description: Google ML Extension Spec
+                        properties:
+                          config:
+                            description: Google ML Extension Config
+                            properties:
+                              vertexAIKeyRef:
+                                type: string
+                              vertexAIRegion:
+                                type: string
+                            type: object
+                        type: object
+                      memoryAgent:
+                        properties:
+                          enabled:
+                            default: true
+                            description: Indicate interest to enable/disable memory
+                              agent for database. The default is true.
+                            type: boolean
+                        required:
+                        - enabled
+                        type: object
+                    type: object
+                  images:
+                    additionalProperties:
+                      type: string
+                    description: Service agent and other data plane GCR images. This
+                      is an optional map that allows a customer to specify GCR images
+                      different from those chosen/provided.
+                    type: object
+                  isStopped:
+                    description: IsStopped indicates whether instance is stopped by
+                      users
+                    type: boolean
+                  mode:
+                    description: Mode specifies how this instance will be managed
+                      by the operator.
+                    enum:
+                    - ManuallySetUpStandby
+                    - Pause
+                    - Recovery
+                    type: string
+                  parameters:
+                    additionalProperties:
+                      type: string
+                    description: Parameters contains the database flags in the map
+                      format
+                    type: object
+                  replication:
+                    description: Replication configures replication connections to
+                      other db instances
+                    properties:
+                      profiles:
+                        description: Profiles contains the collection of replication
+                          profiles.
+                        items:
+                          description: ReplicationProfileSpec is one replication connection
+                            to another database instance.
+                          properties:
+                            certificateReference:
+                              description: CertificateReference refers to a secret
+                                to be used for TLS
+                              properties:
+                                certificateKey:
+                                  description: CertificateKey is the key used to search
+                                    the secret for the Certificate
+                                  type: string
+                                secretRef:
+                                  description: SecretRef is a reference to the secret
+                                    that contains the Certificate
+                                  properties:
+                                    name:
+                                      description: name is unique within a namespace
+                                        to reference a secret resource.
+                                      type: string
+                                    namespace:
+                                      description: namespace defines the space within
+                                        which the secret name must be unique.
+                                      type: string
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                              type: object
+                            host:
+                              description: Host on the other side of the connection
+                              type: string
+                            isActive:
+                              description: IsActive is true for connections currently
+                                enabled, false pauses the connection
+                              type: boolean
+                            isSynchronous:
+                              default: false
+                              description: IsSynchronous is true for synchronous replication
+                                connections
+                              type: boolean
+                            name:
+                              description: Name of the profile
+                              type: string
+                            password:
+                              description: Password is a reference to the secret that
+                                contains user password
+                              properties:
+                                name:
+                                  description: name is unique within a namespace to
+                                    reference a secret resource.
+                                  type: string
+                                namespace:
+                                  description: namespace defines the space within
+                                    which the secret name must be unique.
+                                  type: string
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            passwordResourceVersion:
+                              description: PasswordResourceVersion specifies the password
+                                secret version
+                              type: string
+                            port:
+                              description: Port on the other side of the connection
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            role:
+                              description: Role is the replication role of this instance
+                                to this replication connection.
+                              enum:
+                              - Upstream
+                              - Downstream
+                              type: string
+                            type:
+                              description: Type is physical or logical
+                              enum:
+                              - Logical
+                              - Physical
+                              type: string
+                            username:
+                              description: Username is the name of user to connect
+                                to another database instance
+                              type: string
+                          required:
+                          - name
+                          - type
+                          type: object
+                        type: array
+                    type: object
+                  resources:
+                    description: Resource specification for the database container.
+                    properties:
+                      cpu:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      disks:
+                        items:
+                          description: DiskSpec defines the desired state of a disk.
+                            (the structure is deliberately designed to be flexible,
+                            as a slice, so that if we change a disk layout for different
+                            hosting platforms, the model can be also adjusted to reflect
+                            that).
+                          properties:
+                            accessModes:
+                              description: AccessModes contains the desired access
+                                modes the volume should have.
+                              items:
+                                type: string
+                              type: array
+                            annotations:
+                              additionalProperties:
+                                type: string
+                              description: A map of string keys and values to be stored
+                                in the annotations of the PVC. These can be read and
+                                write by external tools through Kubernetes.
+                              type: object
+                            name:
+                              description: 'Name of a disk. Allowed values are: DataDisk,LogDisk,BackupDisk,ObsDisk'
+                              enum:
+                              - DataDisk
+                              - LogDisk
+                              - BackupDisk
+                              - ObsDisk
+                              type: string
+                            selector:
+                              description: A label query over volumes to consider
+                                for binding.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: A label selector requirement is a
+                                      selector that contains values, a key, and an
+                                      operator that relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: operator represents a key's relationship
+                                          to a set of values. Valid operators are
+                                          In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: values is an array of string
+                                          values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the
+                                          operator is Exists or DoesNotExist, the
+                                          values array must be empty. This array is
+                                          replaced during a strategic merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: matchLabels is a map of {key,value}
+                                    pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions,
+                                    whose key field is "key", the operator is "In",
+                                    and the values array contains only "value". The
+                                    requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            size:
+                              description: Disk size.
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              type: string
+                            storageClass:
+                              description: StorageClass points to a particular CSI
+                                driver and is used for disk provisioning.
+                              type: string
+                            volumeName:
+                              description: VolumeName is the binding reference to
+                                the PersistentVolume tied to this disk.
+                              type: string
+                          required:
+                          - name
+                          - size
+                          type: object
+                        type: array
+                      memory:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  services:
+                    additionalProperties:
+                      type: boolean
+                    description: Services list the optional semi-managed services
+                      that the customers can choose from.
+                    type: object
+                  sourceCidrRanges:
+                    description: Source IP CIDR ranges allowed for a client.
+                    items:
+                      type: string
+                    type: array
+                  tls:
+                    description: TLS configures encryption for connections to the
+                      database instance. Immutable.
+                    properties:
+                      certSecret:
+                        description: CertSecret contains the name of a certificate
+                          Secret within the same namespace. The secret must contain
+                          entries ca.crt (CA certificate), tls.key (server private
+                          key), and tls.crt (server leaf certificate). This Secret
+                          is used to set the TLS config for the database instance.
+                        properties:
+                          name:
+                            description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              TODO: Add other useful fields. apiVersion, kind, uid?'
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    type: object
+                required:
+                - resources
+                type: object
+              tls:
+                description: TLS configures encryption for connections to the database
+                  instance. Immutable.
+                properties:
+                  certSecret:
+                    description: CertSecret contains the name of a certificate Secret
+                      within the same namespace. The secret must contain entries ca.crt
+                      (CA certificate), tls.key (server private key), and tls.crt
+                      (server leaf certificate). This Secret is used to set the TLS
+                      config for the database instances that a part of the DBCluster.
+                    properties:
+                      name:
+                        description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          TODO: Add other useful fields. apiVersion, kind, uid?'
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                type: object
+            type: object
+          status:
+            description: DBClusterStatus defines the observed state of DBCluster
+            properties:
+              certificateReference:
+                description: CertificateReference refers to a secret and a key to
+                  look up an X.509 certificate that can be used to connect to the
+                  database.
+                properties:
+                  certificateKey:
+                    description: CertificateKey is the key used to search the secret
+                      for the Certificate
+                    type: string
+                  secretRef:
+                    description: SecretRef is a reference to the secret that contains
+                      the Certificate
+                    properties:
+                      name:
+                        description: name is unique within a namespace to reference
+                          a secret resource.
+                        type: string
+                      namespace:
+                        description: namespace defines the space within which the
+                          secret name must be unique.
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                type: object
+              conditions:
+                description: Conditions represents the latest available observations
+                  of the Entity's current state.
+                items:
+                  description: "Condition contains details for one aspect of the current
+                    state of this API Resource. --- This struct is intended for direct
+                    use as an array at the field path .status.conditions.  For example,
+                    \n type FooStatus struct{ // Represents the observations of a
+                    foo's current state. // Known .status.conditions.type are: \"Available\",
+                    \"Progressing\", and \"Degraded\" // +patchMergeKey=type // +patchStrategy=merge
+                    // +listType=map // +listMapKey=type Conditions []metav1.Condition
+                    `json:\"conditions,omitempty\" patchStrategy:\"merge\" patchMergeKey:\"type\"
+                    protobuf:\"bytes,1,rep,name=conditions\"` \n // other fields }"
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition
+                        transitioned from one status to another. This should be when
+                        the underlying condition changed.  If that is not known, then
+                        using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human readable message indicating
+                        details about the transition. This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation
+                        that the condition was set based upon. For instance, if .metadata.generation
+                        is currently 12, but the .status.conditions[x].observedGeneration
+                        is 9, the condition is out of date with respect to the current
+                        state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: reason contains a programmatic identifier indicating
+                        the reason for the condition's last transition. Producers
+                        of specific condition types may define expected values and
+                        meanings for this field, and whether the values are considered
+                        a guaranteed API. The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                        --- Many .condition.type values are consistent across resources
+                        like Available, but because arbitrary conditions can be useful
+                        (see .node.status.conditions), the ability to deconflict is
+                        important. The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              criticalIncidents:
+                description: CriticalIncidents is a flat list of all active Critical
+                  Incidents.
+                items:
+                  description: CriticalIncident contains all information about an
+                    ongoing critical incident.
+                  properties:
+                    code:
+                      description: Code is the error code of this particular error.
+                        Error codes are DBSE+numeric strings, like "DBSE1012".
+                      type: string
+                    createTime:
+                      description: CreateTime is the timestamp when this Incident
+                        was created at the origin.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message describes the incident/error that occurred.
+                      type: string
+                    messageTemplateParams:
+                      additionalProperties:
+                        type: string
+                      description: MessageTemplateParams contains key-value pairs
+                        necessary for generating a user-friendly data-driven version
+                        of Message in the UI.
+                      type: object
+                    resource:
+                      description: Resource contains information about the Database
+                        Service component that reported the incident as well as about
+                        the K8s resource.
+                      properties:
+                        component:
+                          description: Component is an internal identifier of the
+                            Database Service subsystem that reported the incident.
+                          type: string
+                        location:
+                          description: Location
+                          properties:
+                            cluster:
+                              description: Cluster is the name of the cluster of the
+                                affected K8S resource.
+                              type: string
+                            group:
+                              description: Group is the Group name of the k8s resource.
+                              type: string
+                            kind:
+                              description: Kind is the Kind of the k8s resource.
+                              type: string
+                            name:
+                              description: Name is the name of the affected K8S resource.
+                              type: string
+                            namespace:
+                              description: Namespace is the namespace of the affected
+                                K8S resource.
+                              type: string
+                            version:
+                              description: Group is the Version of the k8s resource.
+                              type: string
+                          type: object
+                      required:
+                      - component
+                      type: object
+                    stackTrace:
+                      description: StackTrace contains an unstructured list of messages
+                        from the stack trace.
+                      items:
+                        description: CriticalIncidentStackTraceMessage contains stack
+                          trace information available for the incident.
+                        properties:
+                          component:
+                            description: Component is the name of a Database Service
+                              component that logged the message.
+                            type: string
+                          message:
+                            description: Logged message.
+                            type: string
+                        type: object
+                      type: array
+                    transientUntil:
+                      description: TransientUntil if present indicates that the issue
+                        should be considered transient until the specified time.
+                      format: date-time
+                      type: string
+                  required:
+                  - code
+                  - createTime
+                  - resource
+                  type: object
+                type: array
+              currentControlPlaneAgentsVersion:
+                description: currentControlPlaneAgentsVersion is the control plane
+                  agents version the database cluster is running on
+                type: string
+              currentDatabaseImage:
+                description: currentDatabaseImage is the customized database image
+                  the database cluster is using if there is any
+                type: string
+              currentDatabaseVersion:
+                description: CurrentDatabaseVersion is the current database version
+                  the database cluster is running on
+                type: string
+              latestFailoverStatus:
+                description: LatestFailoverStatus represents the status of the most
+                  recently updated failover for the database cluster
+                properties:
+                  failoverName:
+                    description: FailoverName is the Name of the latest failover
+                    type: string
+                  status:
+                    description: Status represents status of the latest failover for
+                      the database cluster
+                    properties:
+                      conditions:
+                        description: Conditions represents the latest available observations
+                          of the Entity's current state.
+                        items:
+                          description: "Condition contains details for one aspect
+                            of the current state of this API Resource. --- This struct
+                            is intended for direct use as an array at the field path
+                            .status.conditions.  For example, \n type FooStatus struct{
+                            // Represents the observations of a foo's current state.
+                            // Known .status.conditions.type are: \"Available\", \"Progressing\",
+                            and \"Degraded\" // +patchMergeKey=type // +patchStrategy=merge
+                            // +listType=map // +listMapKey=type Conditions []metav1.Condition
+                            `json:\"conditions,omitempty\" patchStrategy:\"merge\"
+                            patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`
+                            \n // other fields }"
+                          properties:
+                            lastTransitionTime:
+                              description: lastTransitionTime is the last time the
+                                condition transitioned from one status to another.
+                                This should be when the underlying condition changed.  If
+                                that is not known, then using the time when the API
+                                field changed is acceptable.
+                              format: date-time
+                              type: string
+                            message:
+                              description: message is a human readable message indicating
+                                details about the transition. This may be an empty
+                                string.
+                              maxLength: 32768
+                              type: string
+                            observedGeneration:
+                              description: observedGeneration represents the .metadata.generation
+                                that the condition was set based upon. For instance,
+                                if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration
+                                is 9, the condition is out of date with respect to
+                                the current state of the instance.
+                              format: int64
+                              minimum: 0
+                              type: integer
+                            reason:
+                              description: reason contains a programmatic identifier
+                                indicating the reason for the condition's last transition.
+                                Producers of specific condition types may define expected
+                                values and meanings for this field, and whether the
+                                values are considered a guaranteed API. The value
+                                should be a CamelCase string. This field may not be
+                                empty.
+                              maxLength: 1024
+                              minLength: 1
+                              pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                              type: string
+                            status:
+                              description: status of the condition, one of True, False,
+                                Unknown.
+                              enum:
+                              - "True"
+                              - "False"
+                              - Unknown
+                              type: string
+                            type:
+                              description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                                --- Many .condition.type values are consistent across
+                                resources like Available, but because arbitrary conditions
+                                can be useful (see .node.status.conditions), the ability
+                                to deconflict is important. The regex it matches is
+                                (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                              maxLength: 316
+                              pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                              type: string
+                          required:
+                          - lastTransitionTime
+                          - message
+                          - reason
+                          - status
+                          - type
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - type
+                        x-kubernetes-list-type: map
+                      createTime:
+                        description: CreateTime is the time the underlying failover
+                          was created.
+                        format: date-time
+                        type: string
+                      criticalIncidents:
+                        description: CriticalIncidents is a flat list of all active
+                          Critical Incidents.
+                        items:
+                          description: CriticalIncident contains all information about
+                            an ongoing critical incident.
+                          properties:
+                            code:
+                              description: Code is the error code of this particular
+                                error. Error codes are DBSE+numeric strings, like
+                                "DBSE1012".
+                              type: string
+                            createTime:
+                              description: CreateTime is the timestamp when this Incident
+                                was created at the origin.
+                              format: date-time
+                              type: string
+                            message:
+                              description: Message describes the incident/error that
+                                occurred.
+                              type: string
+                            messageTemplateParams:
+                              additionalProperties:
+                                type: string
+                              description: MessageTemplateParams contains key-value
+                                pairs necessary for generating a user-friendly data-driven
+                                version of Message in the UI.
+                              type: object
+                            resource:
+                              description: Resource contains information about the
+                                Database Service component that reported the incident
+                                as well as about the K8s resource.
+                              properties:
+                                component:
+                                  description: Component is an internal identifier
+                                    of the Database Service subsystem that reported
+                                    the incident.
+                                  type: string
+                                location:
+                                  description: Location
+                                  properties:
+                                    cluster:
+                                      description: Cluster is the name of the cluster
+                                        of the affected K8S resource.
+                                      type: string
+                                    group:
+                                      description: Group is the Group name of the
+                                        k8s resource.
+                                      type: string
+                                    kind:
+                                      description: Kind is the Kind of the k8s resource.
+                                      type: string
+                                    name:
+                                      description: Name is the name of the affected
+                                        K8S resource.
+                                      type: string
+                                    namespace:
+                                      description: Namespace is the namespace of the
+                                        affected K8S resource.
+                                      type: string
+                                    version:
+                                      description: Group is the Version of the k8s
+                                        resource.
+                                      type: string
+                                  type: object
+                              required:
+                              - component
+                              type: object
+                            stackTrace:
+                              description: StackTrace contains an unstructured list
+                                of messages from the stack trace.
+                              items:
+                                description: CriticalIncidentStackTraceMessage contains
+                                  stack trace information available for the incident.
+                                properties:
+                                  component:
+                                    description: Component is the name of a Database
+                                      Service component that logged the message.
+                                    type: string
+                                  message:
+                                    description: Logged message.
+                                    type: string
+                                type: object
+                              type: array
+                            transientUntil:
+                              description: TransientUntil if present indicates that
+                                the issue should be considered transient until the
+                                specified time.
+                              format: date-time
+                              type: string
+                          required:
+                          - code
+                          - createTime
+                          - resource
+                          type: object
+                        type: array
+                      endTime:
+                        description: EndTime is the time failover reached its final
+                          state.
+                        format: date-time
+                        type: string
+                      internal:
+                        description: Internal is used by the DBS controllers. Users
+                          should not directly depend on the information in this section.
+                        properties:
+                          newPrimary:
+                            description: NewPrimary is the instance that we are attempting
+                              to failover to.
+                            type: string
+                          oldPrimary:
+                            description: OldPrimary is the instance that was the primary
+                              at the start of the failover.
+                            type: string
+                          phase:
+                            description: Phase is used to keep track of the current
+                              state of the failover
+                            enum:
+                            - StopPrimary
+                            - PromoteStandby
+                            - ValidateNewPrimary
+                            - UpdateOldPrimaryResources
+                            - UpdateNewPrimaryResources
+                            - Cleanup
+                            - Complete
+                            - Recreate
+                            type: string
+                        required:
+                        - newPrimary
+                        - oldPrimary
+                        type: object
+                      observedGeneration:
+                        format: int64
+                        type: integer
+                      reconciled:
+                        type: boolean
+                      startTime:
+                        description: StartTime is the time failover started.
+                        format: date-time
+                        type: string
+                      state:
+                        description: State is the current state of the failover operation.
+                        enum:
+                        - InProgress
+                        - Success
+                        - Failed_RollbackInProgress
+                        - Failed_RollbackSuccess
+                        - Failed_RollbackFailed
+                        type: string
+                    type: object
+                type: object
+              maintenanceStatus:
+                description: MaintenancePolicyStatus defines the current status of
+                  MaintenancePolicy.
+                properties:
+                  conditions:
+                    description: Conditions represents the latest available observations
+                      of the Entity's current state.
+                    items:
+                      description: "Condition contains details for one aspect of the
+                        current state of this API Resource. --- This struct is intended
+                        for direct use as an array at the field path .status.conditions.
+                        \ For example, \n type FooStatus struct{ // Represents the
+                        observations of a foo's current state. // Known .status.conditions.type
+                        are: \"Available\", \"Progressing\", and \"Degraded\" // +patchMergeKey=type
+                        // +patchStrategy=merge // +listType=map // +listMapKey=type
+                        Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                        patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`
+                        \n // other fields }"
+                      properties:
+                        lastTransitionTime:
+                          description: lastTransitionTime is the last time the condition
+                            transitioned from one status to another. This should be
+                            when the underlying condition changed.  If that is not
+                            known, then using the time when the API field changed
+                            is acceptable.
+                          format: date-time
+                          type: string
+                        message:
+                          description: message is a human readable message indicating
+                            details about the transition. This may be an empty string.
+                          maxLength: 32768
+                          type: string
+                        observedGeneration:
+                          description: observedGeneration represents the .metadata.generation
+                            that the condition was set based upon. For instance, if
+                            .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration
+                            is 9, the condition is out of date with respect to the
+                            current state of the instance.
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        reason:
+                          description: reason contains a programmatic identifier indicating
+                            the reason for the condition's last transition. Producers
+                            of specific condition types may define expected values
+                            and meanings for this field, and whether the values are
+                            considered a guaranteed API. The value should be a CamelCase
+                            string. This field may not be empty.
+                          maxLength: 1024
+                          minLength: 1
+                          pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                          type: string
+                        status:
+                          description: status of the condition, one of True, False,
+                            Unknown.
+                          enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                          type: string
+                        type:
+                          description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                            --- Many .condition.type values are consistent across
+                            resources like Available, but because arbitrary conditions
+                            can be useful (see .node.status.conditions), the ability
+                            to deconflict is important. The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                          maxLength: 316
+                          pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                          type: string
+                      required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - type
+                    x-kubernetes-list-type: map
+                  criticalIncidents:
+                    description: CriticalIncidents is a flat list of all active Critical
+                      Incidents.
+                    items:
+                      description: CriticalIncident contains all information about
+                        an ongoing critical incident.
+                      properties:
+                        code:
+                          description: Code is the error code of this particular error.
+                            Error codes are DBSE+numeric strings, like "DBSE1012".
+                          type: string
+                        createTime:
+                          description: CreateTime is the timestamp when this Incident
+                            was created at the origin.
+                          format: date-time
+                          type: string
+                        message:
+                          description: Message describes the incident/error that occurred.
+                          type: string
+                        messageTemplateParams:
+                          additionalProperties:
+                            type: string
+                          description: MessageTemplateParams contains key-value pairs
+                            necessary for generating a user-friendly data-driven version
+                            of Message in the UI.
+                          type: object
+                        resource:
+                          description: Resource contains information about the Database
+                            Service component that reported the incident as well as
+                            about the K8s resource.
+                          properties:
+                            component:
+                              description: Component is an internal identifier of
+                                the Database Service subsystem that reported the incident.
+                              type: string
+                            location:
+                              description: Location
+                              properties:
+                                cluster:
+                                  description: Cluster is the name of the cluster
+                                    of the affected K8S resource.
+                                  type: string
+                                group:
+                                  description: Group is the Group name of the k8s
+                                    resource.
+                                  type: string
+                                kind:
+                                  description: Kind is the Kind of the k8s resource.
+                                  type: string
+                                name:
+                                  description: Name is the name of the affected K8S
+                                    resource.
+                                  type: string
+                                namespace:
+                                  description: Namespace is the namespace of the affected
+                                    K8S resource.
+                                  type: string
+                                version:
+                                  description: Group is the Version of the k8s resource.
+                                  type: string
+                              type: object
+                          required:
+                          - component
+                          type: object
+                        stackTrace:
+                          description: StackTrace contains an unstructured list of
+                            messages from the stack trace.
+                          items:
+                            description: CriticalIncidentStackTraceMessage contains
+                              stack trace information available for the incident.
+                            properties:
+                              component:
+                                description: Component is the name of a Database Service
+                                  component that logged the message.
+                                type: string
+                              message:
+                                description: Logged message.
+                                type: string
+                            type: object
+                          type: array
+                        transientUntil:
+                          description: TransientUntil if present indicates that the
+                            issue should be considered transient until the specified
+                            time.
+                          format: date-time
+                          type: string
+                      required:
+                      - code
+                      - createTime
+                      - resource
+                      type: object
+                    type: array
+                  currentMaintenance:
+                    description: Tracks the current maintenance window times. Set
+                      only when MaintenanceWindowInProgress condition is active.
+                    properties:
+                      estimatedendtime:
+                        description: Time at which all maintenance activities are
+                          supposed to end. This data is purely informative, and it
+                          is based on the duration configured in the schedule. The
+                          actual maintenance completion will be in the status of the
+                          components under maintenance.
+                        format: date-time
+                        type: string
+                      starttime:
+                        description: Time at which maintenance activities will start.
+                        format: date-time
+                        type: string
+                    type: object
+                  duration:
+                    description: Duration for which the last maintenance activity
+                      ran.
+                    type: string
+                  observedGeneration:
+                    format: int64
+                    type: integer
+                  reconciled:
+                    type: boolean
+                  upcomingmaintenance:
+                    description: Upcoming maintenance date for routine maintenance
+                    properties:
+                      estimatedendtime:
+                        description: Time at which all maintenance activities are
+                          supposed to end. This data is purely informative, and it
+                          is based on the duration configured in the schedule. The
+                          actual maintenance completion will be in the status of the
+                          components under maintenance.
+                        format: date-time
+                        type: string
+                      starttime:
+                        description: Time at which maintenance activities will start.
+                        format: date-time
+                        type: string
+                    type: object
+                  updateTime:
+                    description: Last Updated time of the maintenance Policy.
+                    format: date-time
+                    type: string
+                type: object
+              migrationStatus:
+                description: MigrationStatus represents the status of migration for
+                  the database cluster.
+                properties:
+                  status:
+                    description: Status represents status of the migration for the
+                      database cluster
+                    properties:
+                      conditions:
+                        description: Conditions represents the latest available observations
+                          of the Entity's current state.
+                        items:
+                          description: "Condition contains details for one aspect
+                            of the current state of this API Resource. --- This struct
+                            is intended for direct use as an array at the field path
+                            .status.conditions.  For example, \n type FooStatus struct{
+                            // Represents the observations of a foo's current state.
+                            // Known .status.conditions.type are: \"Available\", \"Progressing\",
+                            and \"Degraded\" // +patchMergeKey=type // +patchStrategy=merge
+                            // +listType=map // +listMapKey=type Conditions []metav1.Condition
+                            `json:\"conditions,omitempty\" patchStrategy:\"merge\"
+                            patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`
+                            \n // other fields }"
+                          properties:
+                            lastTransitionTime:
+                              description: lastTransitionTime is the last time the
+                                condition transitioned from one status to another.
+                                This should be when the underlying condition changed.  If
+                                that is not known, then using the time when the API
+                                field changed is acceptable.
+                              format: date-time
+                              type: string
+                            message:
+                              description: message is a human readable message indicating
+                                details about the transition. This may be an empty
+                                string.
+                              maxLength: 32768
+                              type: string
+                            observedGeneration:
+                              description: observedGeneration represents the .metadata.generation
+                                that the condition was set based upon. For instance,
+                                if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration
+                                is 9, the condition is out of date with respect to
+                                the current state of the instance.
+                              format: int64
+                              minimum: 0
+                              type: integer
+                            reason:
+                              description: reason contains a programmatic identifier
+                                indicating the reason for the condition's last transition.
+                                Producers of specific condition types may define expected
+                                values and meanings for this field, and whether the
+                                values are considered a guaranteed API. The value
+                                should be a CamelCase string. This field may not be
+                                empty.
+                              maxLength: 1024
+                              minLength: 1
+                              pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                              type: string
+                            status:
+                              description: status of the condition, one of True, False,
+                                Unknown.
+                              enum:
+                              - "True"
+                              - "False"
+                              - Unknown
+                              type: string
+                            type:
+                              description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                                --- Many .condition.type values are consistent across
+                                resources like Available, but because arbitrary conditions
+                                can be useful (see .node.status.conditions), the ability
+                                to deconflict is important. The regex it matches is
+                                (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                              maxLength: 316
+                              pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                              type: string
+                          required:
+                          - lastTransitionTime
+                          - message
+                          - reason
+                          - status
+                          - type
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - type
+                        x-kubernetes-list-type: map
+                      criticalIncidents:
+                        description: CriticalIncidents is a flat list of all active
+                          Critical Incidents.
+                        items:
+                          description: CriticalIncident contains all information about
+                            an ongoing critical incident.
+                          properties:
+                            code:
+                              description: Code is the error code of this particular
+                                error. Error codes are DBSE+numeric strings, like
+                                "DBSE1012".
+                              type: string
+                            createTime:
+                              description: CreateTime is the timestamp when this Incident
+                                was created at the origin.
+                              format: date-time
+                              type: string
+                            message:
+                              description: Message describes the incident/error that
+                                occurred.
+                              type: string
+                            messageTemplateParams:
+                              additionalProperties:
+                                type: string
+                              description: MessageTemplateParams contains key-value
+                                pairs necessary for generating a user-friendly data-driven
+                                version of Message in the UI.
+                              type: object
+                            resource:
+                              description: Resource contains information about the
+                                Database Service component that reported the incident
+                                as well as about the K8s resource.
+                              properties:
+                                component:
+                                  description: Component is an internal identifier
+                                    of the Database Service subsystem that reported
+                                    the incident.
+                                  type: string
+                                location:
+                                  description: Location
+                                  properties:
+                                    cluster:
+                                      description: Cluster is the name of the cluster
+                                        of the affected K8S resource.
+                                      type: string
+                                    group:
+                                      description: Group is the Group name of the
+                                        k8s resource.
+                                      type: string
+                                    kind:
+                                      description: Kind is the Kind of the k8s resource.
+                                      type: string
+                                    name:
+                                      description: Name is the name of the affected
+                                        K8S resource.
+                                      type: string
+                                    namespace:
+                                      description: Namespace is the namespace of the
+                                        affected K8S resource.
+                                      type: string
+                                    version:
+                                      description: Group is the Version of the k8s
+                                        resource.
+                                      type: string
+                                  type: object
+                              required:
+                              - component
+                              type: object
+                            stackTrace:
+                              description: StackTrace contains an unstructured list
+                                of messages from the stack trace.
+                              items:
+                                description: CriticalIncidentStackTraceMessage contains
+                                  stack trace information available for the incident.
+                                properties:
+                                  component:
+                                    description: Component is the name of a Database
+                                      Service component that logged the message.
+                                    type: string
+                                  message:
+                                    description: Logged message.
+                                    type: string
+                                type: object
+                              type: array
+                            transientUntil:
+                              description: TransientUntil if present indicates that
+                                the issue should be considered transient until the
+                                specified time.
+                              format: date-time
+                              type: string
+                          required:
+                          - code
+                          - createTime
+                          - resource
+                          type: object
+                        type: array
+                      observedGeneration:
+                        format: int64
+                        type: integer
+                      profiles:
+                        items:
+                          description: ReplicationProfileStatus is the status of one
+                            individual replication connection
+                          properties:
+                            conditions:
+                              description: Conditions represents the latest available
+                                observations of the Entity's current state.
+                              items:
+                                description: "Condition contains details for one aspect
+                                  of the current state of this API Resource. --- This
+                                  struct is intended for direct use as an array at
+                                  the field path .status.conditions.  For example,
+                                  \n type FooStatus struct{ // Represents the observations
+                                  of a foo's current state. // Known .status.conditions.type
+                                  are: \"Available\", \"Progressing\", and \"Degraded\"
+                                  // +patchMergeKey=type // +patchStrategy=merge //
+                                  +listType=map // +listMapKey=type Conditions []metav1.Condition
+                                  `json:\"conditions,omitempty\" patchStrategy:\"merge\"
+                                  patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`
+                                  \n // other fields }"
+                                properties:
+                                  lastTransitionTime:
+                                    description: lastTransitionTime is the last time
+                                      the condition transitioned from one status to
+                                      another. This should be when the underlying
+                                      condition changed.  If that is not known, then
+                                      using the time when the API field changed is
+                                      acceptable.
+                                    format: date-time
+                                    type: string
+                                  message:
+                                    description: message is a human readable message
+                                      indicating details about the transition. This
+                                      may be an empty string.
+                                    maxLength: 32768
+                                    type: string
+                                  observedGeneration:
+                                    description: observedGeneration represents the
+                                      .metadata.generation that the condition was
+                                      set based upon. For instance, if .metadata.generation
+                                      is currently 12, but the .status.conditions[x].observedGeneration
+                                      is 9, the condition is out of date with respect
+                                      to the current state of the instance.
+                                    format: int64
+                                    minimum: 0
+                                    type: integer
+                                  reason:
+                                    description: reason contains a programmatic identifier
+                                      indicating the reason for the condition's last
+                                      transition. Producers of specific condition
+                                      types may define expected values and meanings
+                                      for this field, and whether the values are considered
+                                      a guaranteed API. The value should be a CamelCase
+                                      string. This field may not be empty.
+                                    maxLength: 1024
+                                    minLength: 1
+                                    pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                                    type: string
+                                  status:
+                                    description: status of the condition, one of True,
+                                      False, Unknown.
+                                    enum:
+                                    - "True"
+                                    - "False"
+                                    - Unknown
+                                    type: string
+                                  type:
+                                    description: type of condition in CamelCase or
+                                      in foo.example.com/CamelCase. --- Many .condition.type
+                                      values are consistent across resources like
+                                      Available, but because arbitrary conditions
+                                      can be useful (see .node.status.conditions),
+                                      the ability to deconflict is important. The
+                                      regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                                    maxLength: 316
+                                    pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                                    type: string
+                                required:
+                                - lastTransitionTime
+                                - message
+                                - reason
+                                - status
+                                - type
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - type
+                              x-kubernetes-list-type: map
+                            criticalIncidents:
+                              description: CriticalIncidents is a flat list of all
+                                active Critical Incidents.
+                              items:
+                                description: CriticalIncident contains all information
+                                  about an ongoing critical incident.
+                                properties:
+                                  code:
+                                    description: Code is the error code of this particular
+                                      error. Error codes are DBSE+numeric strings,
+                                      like "DBSE1012".
+                                    type: string
+                                  createTime:
+                                    description: CreateTime is the timestamp when
+                                      this Incident was created at the origin.
+                                    format: date-time
+                                    type: string
+                                  message:
+                                    description: Message describes the incident/error
+                                      that occurred.
+                                    type: string
+                                  messageTemplateParams:
+                                    additionalProperties:
+                                      type: string
+                                    description: MessageTemplateParams contains key-value
+                                      pairs necessary for generating a user-friendly
+                                      data-driven version of Message in the UI.
+                                    type: object
+                                  resource:
+                                    description: Resource contains information about
+                                      the Database Service component that reported
+                                      the incident as well as about the K8s resource.
+                                    properties:
+                                      component:
+                                        description: Component is an internal identifier
+                                          of the Database Service subsystem that reported
+                                          the incident.
+                                        type: string
+                                      location:
+                                        description: Location
+                                        properties:
+                                          cluster:
+                                            description: Cluster is the name of the
+                                              cluster of the affected K8S resource.
+                                            type: string
+                                          group:
+                                            description: Group is the Group name of
+                                              the k8s resource.
+                                            type: string
+                                          kind:
+                                            description: Kind is the Kind of the k8s
+                                              resource.
+                                            type: string
+                                          name:
+                                            description: Name is the name of the affected
+                                              K8S resource.
+                                            type: string
+                                          namespace:
+                                            description: Namespace is the namespace
+                                              of the affected K8S resource.
+                                            type: string
+                                          version:
+                                            description: Group is the Version of the
+                                              k8s resource.
+                                            type: string
+                                        type: object
+                                    required:
+                                    - component
+                                    type: object
+                                  stackTrace:
+                                    description: StackTrace contains an unstructured
+                                      list of messages from the stack trace.
+                                    items:
+                                      description: CriticalIncidentStackTraceMessage
+                                        contains stack trace information available
+                                        for the incident.
+                                      properties:
+                                        component:
+                                          description: Component is the name of a
+                                            Database Service component that logged
+                                            the message.
+                                          type: string
+                                        message:
+                                          description: Logged message.
+                                          type: string
+                                      type: object
+                                    type: array
+                                  transientUntil:
+                                    description: TransientUntil if present indicates
+                                      that the issue should be considered transient
+                                      until the specified time.
+                                    format: date-time
+                                    type: string
+                                required:
+                                - code
+                                - createTime
+                                - resource
+                                type: object
+                              type: array
+                            observedGeneration:
+                              format: int64
+                              type: integer
+                            profile:
+                              description: ReplicationProfileSpec is one replication
+                                connection to another database instance.
+                              properties:
+                                certificateReference:
+                                  description: CertificateReference refers to a secret
+                                    to be used for TLS
+                                  properties:
+                                    certificateKey:
+                                      description: CertificateKey is the key used
+                                        to search the secret for the Certificate
+                                      type: string
+                                    secretRef:
+                                      description: SecretRef is a reference to the
+                                        secret that contains the Certificate
+                                      properties:
+                                        name:
+                                          description: name is unique within a namespace
+                                            to reference a secret resource.
+                                          type: string
+                                        namespace:
+                                          description: namespace defines the space
+                                            within which the secret name must be unique.
+                                          type: string
+                                      type: object
+                                      x-kubernetes-map-type: atomic
+                                  type: object
+                                host:
+                                  description: Host on the other side of the connection
+                                  type: string
+                                isActive:
+                                  description: IsActive is true for connections currently
+                                    enabled, false pauses the connection
+                                  type: boolean
+                                isSynchronous:
+                                  default: false
+                                  description: IsSynchronous is true for synchronous
+                                    replication connections
+                                  type: boolean
+                                name:
+                                  description: Name of the profile
+                                  type: string
+                                password:
+                                  description: Password is a reference to the secret
+                                    that contains user password
+                                  properties:
+                                    name:
+                                      description: name is unique within a namespace
+                                        to reference a secret resource.
+                                      type: string
+                                    namespace:
+                                      description: namespace defines the space within
+                                        which the secret name must be unique.
+                                      type: string
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                passwordResourceVersion:
+                                  description: PasswordResourceVersion specifies the
+                                    password secret version
+                                  type: string
+                                port:
+                                  description: Port on the other side of the connection
+                                  format: int32
+                                  maximum: 65535
+                                  minimum: 1
+                                  type: integer
+                                role:
+                                  description: Role is the replication role of this
+                                    instance to this replication connection.
+                                  enum:
+                                  - Upstream
+                                  - Downstream
+                                  type: string
+                                type:
+                                  description: Type is physical or logical
+                                  enum:
+                                  - Logical
+                                  - Physical
+                                  type: string
+                                username:
+                                  description: Username is the name of user to connect
+                                    to another database instance
+                                  type: string
+                              required:
+                              - name
+                              - type
+                              type: object
+                            reconciled:
+                              type: boolean
+                          type: object
+                        type: array
+                      reconciled:
+                        type: boolean
+                    type: object
+                type: object
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                type: string
+              primary:
+                properties:
+                  ActiveImages:
+                    additionalProperties:
+                      type: string
+                    description: ActiveImages stores the stable images used by the
+                      active containers.
+                    type: object
+                  LastFailedImages:
+                    additionalProperties:
+                      type: string
+                    description: LastFailedImages stores the images which failed the
+                      last patching workflow.
+                    type: object
+                  allocatedResources:
+                    description: AllocatedResources represents the current configuration
+                      of memory/CPU/disks
+                    properties:
+                      cpu:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      disks:
+                        items:
+                          description: DiskSpec defines the desired state of a disk.
+                            (the structure is deliberately designed to be flexible,
+                            as a slice, so that if we change a disk layout for different
+                            hosting platforms, the model can be also adjusted to reflect
+                            that).
+                          properties:
+                            accessModes:
+                              description: AccessModes contains the desired access
+                                modes the volume should have.
+                              items:
+                                type: string
+                              type: array
+                            annotations:
+                              additionalProperties:
+                                type: string
+                              description: A map of string keys and values to be stored
+                                in the annotations of the PVC. These can be read and
+                                write by external tools through Kubernetes.
+                              type: object
+                            name:
+                              description: 'Name of a disk. Allowed values are: DataDisk,LogDisk,BackupDisk,ObsDisk'
+                              enum:
+                              - DataDisk
+                              - LogDisk
+                              - BackupDisk
+                              - ObsDisk
+                              type: string
+                            selector:
+                              description: A label query over volumes to consider
+                                for binding.
+                              properties:
+                                matchExpressions:
+                                  description: matchExpressions is a list of label
+                                    selector requirements. The requirements are ANDed.
+                                  items:
+                                    description: A label selector requirement is a
+                                      selector that contains values, a key, and an
+                                      operator that relates the key and values.
+                                    properties:
+                                      key:
+                                        description: key is the label key that the
+                                          selector applies to.
+                                        type: string
+                                      operator:
+                                        description: operator represents a key's relationship
+                                          to a set of values. Valid operators are
+                                          In, NotIn, Exists and DoesNotExist.
+                                        type: string
+                                      values:
+                                        description: values is an array of string
+                                          values. If the operator is In or NotIn,
+                                          the values array must be non-empty. If the
+                                          operator is Exists or DoesNotExist, the
+                                          values array must be empty. This array is
+                                          replaced during a strategic merge patch.
+                                        items:
+                                          type: string
+                                        type: array
+                                    required:
+                                    - key
+                                    - operator
+                                    type: object
+                                  type: array
+                                matchLabels:
+                                  additionalProperties:
+                                    type: string
+                                  description: matchLabels is a map of {key,value}
+                                    pairs. A single {key,value} in the matchLabels
+                                    map is equivalent to an element of matchExpressions,
+                                    whose key field is "key", the operator is "In",
+                                    and the values array contains only "value". The
+                                    requirements are ANDed.
+                                  type: object
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            size:
+                              description: Disk size.
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              type: string
+                            storageClass:
+                              description: StorageClass points to a particular CSI
+                                driver and is used for disk provisioning.
+                              type: string
+                            volumeName:
+                              description: VolumeName is the binding reference to
+                                the PersistentVolume tied to this disk.
+                              type: string
+                          required:
+                          - name
+                          - size
+                          type: object
+                        type: array
+                      memory:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  conditions:
+                    description: Conditions represents the latest available observations
+                      of the Instance's current state.
+                    items:
+                      description: "Condition contains details for one aspect of the
+                        current state of this API Resource. --- This struct is intended
+                        for direct use as an array at the field path .status.conditions.
+                        \ For example, \n type FooStatus struct{ // Represents the
+                        observations of a foo's current state. // Known .status.conditions.type
+                        are: \"Available\", \"Progressing\", and \"Degraded\" // +patchMergeKey=type
+                        // +patchStrategy=merge // +listType=map // +listMapKey=type
+                        Conditions []metav1.Condition `json:\"conditions,omitempty\"
+                        patchStrategy:\"merge\" patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`
+                        \n // other fields }"
+                      properties:
+                        lastTransitionTime:
+                          description: lastTransitionTime is the last time the condition
+                            transitioned from one status to another. This should be
+                            when the underlying condition changed.  If that is not
+                            known, then using the time when the API field changed
+                            is acceptable.
+                          format: date-time
+                          type: string
+                        message:
+                          description: message is a human readable message indicating
+                            details about the transition. This may be an empty string.
+                          maxLength: 32768
+                          type: string
+                        observedGeneration:
+                          description: observedGeneration represents the .metadata.generation
+                            that the condition was set based upon. For instance, if
+                            .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration
+                            is 9, the condition is out of date with respect to the
+                            current state of the instance.
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        reason:
+                          description: reason contains a programmatic identifier indicating
+                            the reason for the condition's last transition. Producers
+                            of specific condition types may define expected values
+                            and meanings for this field, and whether the values are
+                            considered a guaranteed API. The value should be a CamelCase
+                            string. This field may not be empty.
+                          maxLength: 1024
+                          minLength: 1
+                          pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                          type: string
+                        status:
+                          description: status of the condition, one of True, False,
+                            Unknown.
+                          enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                          type: string
+                        type:
+                          description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                            --- Many .condition.type values are consistent across
+                            resources like Available, but because arbitrary conditions
+                            can be useful (see .node.status.conditions), the ability
+                            to deconflict is important. The regex it matches is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                          maxLength: 316
+                          pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                          type: string
+                      required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - type
+                    x-kubernetes-list-type: map
+                  currentParameters:
+                    additionalProperties:
+                      type: string
+                    description: CurrentParameters stores the last successfully set
+                      database parameters.
+                    type: object
+                  endpoint:
+                    description: Endpoint is presently expressed in the format of
+                      <instanceName>-svc.<ns>.
+                    type: string
+                  lastFailedParameterUpdate:
+                    additionalProperties:
+                      type: string
+                    description: LastFailedParameterUpdate is used to avoid getting
+                      into the failed parameter update loop.
+                    type: object
+                  latestExport:
+                    description: LatestExport represents the latest export for the
+                      database instance
+                    properties:
+                      creationTimeStamp:
+                        description: CreationTimeStamp represents the creation time
+                          of the export for the database instance
+                        format: date-time
+                        type: string
+                      exportName:
+                        description: ExportName is the Name of the latest export
+                        type: string
+                      spec:
+                        description: Spec represents the spec of the export for the
+                          database instance
+                        properties:
+                          dbclusterRef:
+                            description: DBClusterRef is the dbcluster name within
+                              the same namespace to export from.
+                            type: string
+                          exportLocation:
+                            description: ExportLocation specifies a storage location
+                              for the export files. A user is to ensure proper write
+                              access to the storage bucket from within the Operator.
+                            properties:
+                              gcsOptions:
+                                description: GCSOptions is a reference to GCS dependent
+                                  options.
+                                properties:
+                                  bucket:
+                                    description: 'Bucket is a required field, (ex:
+                                      dbs-dump-bucket) A user is to ensure proper
+                                      write access to the storage bucket from within
+                                      the Operator.'
+                                    type: string
+                                  key:
+                                    description: 'Object key for the dump files. (ex:
+                                      ods-dump/scottschema.dmp).'
+                                    type: string
+                                  secretRef:
+                                    description: SecretRef is a reference to the secret
+                                      that stores GCS access information.
+                                    properties:
+                                      name:
+                                        description: name is unique within a namespace
+                                          to reference a secret resource.
+                                        type: string
+                                      namespace:
+                                        description: namespace defines the space within
+                                          which the secret name must be unique.
+                                        type: string
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                required:
+                                - bucket
+                                - key
+                                type: object
+                              s3Options:
+                                description: 'S3Options is a reference to S3 dependent
+                                  options (Ex: S3 Access Secret, End Point, Region).'
+                                properties:
+                                  bucket:
+                                    description: 'Bucket is a required field, (ex:
+                                      dbs-dump-bucket) A user is to ensure proper
+                                      write access to the storage bucket from within
+                                      the Operator.'
+                                    type: string
+                                  caBundle:
+                                    description: CABundle is a pool of PEM encoded
+                                      CA certs which will be used to validate the
+                                      storageGrid's server certificate.
+                                    items:
+                                      type: string
+                                    type: array
+                                  endpoint:
+                                    description: Endpoint is S3 end point.
+                                    type: string
+                                  key:
+                                    description: 'Object key for the dump files. (ex:
+                                      ods-dump/scottschema.dmp).'
+                                    type: string
+                                  region:
+                                    description: Region is S3 region the bucket resides
+                                      in.
+                                    type: string
+                                  secretRef:
+                                    description: SecretRef is a reference to the secret
+                                      that stores bucket access information.
+                                    properties:
+                                      name:
+                                        description: name is unique within a namespace
+                                          to reference a secret resource.
+                                        type: string
+                                      namespace:
+                                        description: namespace defines the space within
+                                          which the secret name must be unique.
+                                        type: string
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                required:
+                                - bucket
+                                - key
+                                type: object
+                              type:
+                                description: 'Type of Repository (ex: S3, GCS), which
+                                  tells the agent which storage system/API to use.'
+                                enum:
+                                - GCS
+                                - S3
+                                type: string
+                            required:
+                            - type
+                            type: object
+                        required:
+                        - exportLocation
+                        type: object
+                      status:
+                        description: Status represents the of the latest import for
+                          the database instance
+                        properties:
+                          completeTime:
+                            description: CompleteTime is the time export completed.
+                            format: date-time
+                            type: string
+                          conditions:
+                            description: Conditions represents the latest available
+                              observations of the Entity's current state.
+                            items:
+                              description: "Condition contains details for one aspect
+                                of the current state of this API Resource. --- This
+                                struct is intended for direct use as an array at the
+                                field path .status.conditions.  For example, \n type
+                                FooStatus struct{ // Represents the observations of
+                                a foo's current state. // Known .status.conditions.type
+                                are: \"Available\", \"Progressing\", and \"Degraded\"
+                                // +patchMergeKey=type // +patchStrategy=merge //
+                                +listType=map // +listMapKey=type Conditions []metav1.Condition
+                                `json:\"conditions,omitempty\" patchStrategy:\"merge\"
+                                patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`
+                                \n // other fields }"
+                              properties:
+                                lastTransitionTime:
+                                  description: lastTransitionTime is the last time
+                                    the condition transitioned from one status to
+                                    another. This should be when the underlying condition
+                                    changed.  If that is not known, then using the
+                                    time when the API field changed is acceptable.
+                                  format: date-time
+                                  type: string
+                                message:
+                                  description: message is a human readable message
+                                    indicating details about the transition. This
+                                    may be an empty string.
+                                  maxLength: 32768
+                                  type: string
+                                observedGeneration:
+                                  description: observedGeneration represents the .metadata.generation
+                                    that the condition was set based upon. For instance,
+                                    if .metadata.generation is currently 12, but the
+                                    .status.conditions[x].observedGeneration is 9,
+                                    the condition is out of date with respect to the
+                                    current state of the instance.
+                                  format: int64
+                                  minimum: 0
+                                  type: integer
+                                reason:
+                                  description: reason contains a programmatic identifier
+                                    indicating the reason for the condition's last
+                                    transition. Producers of specific condition types
+                                    may define expected values and meanings for this
+                                    field, and whether the values are considered a
+                                    guaranteed API. The value should be a CamelCase
+                                    string. This field may not be empty.
+                                  maxLength: 1024
+                                  minLength: 1
+                                  pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                                  type: string
+                                status:
+                                  description: status of the condition, one of True,
+                                    False, Unknown.
+                                  enum:
+                                  - "True"
+                                  - "False"
+                                  - Unknown
+                                  type: string
+                                type:
+                                  description: type of condition in CamelCase or in
+                                    foo.example.com/CamelCase. --- Many .condition.type
+                                    values are consistent across resources like Available,
+                                    but because arbitrary conditions can be useful
+                                    (see .node.status.conditions), the ability to
+                                    deconflict is important. The regex it matches
+                                    is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                                  maxLength: 316
+                                  pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                                  type: string
+                              required:
+                              - lastTransitionTime
+                              - message
+                              - reason
+                              - status
+                              - type
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - type
+                            x-kubernetes-list-type: map
+                          criticalIncidents:
+                            description: CriticalIncidents is a flat list of all active
+                              Critical Incidents.
+                            items:
+                              description: CriticalIncident contains all information
+                                about an ongoing critical incident.
+                              properties:
+                                code:
+                                  description: Code is the error code of this particular
+                                    error. Error codes are DBSE+numeric strings, like
+                                    "DBSE1012".
+                                  type: string
+                                createTime:
+                                  description: CreateTime is the timestamp when this
+                                    Incident was created at the origin.
+                                  format: date-time
+                                  type: string
+                                message:
+                                  description: Message describes the incident/error
+                                    that occurred.
+                                  type: string
+                                messageTemplateParams:
+                                  additionalProperties:
+                                    type: string
+                                  description: MessageTemplateParams contains key-value
+                                    pairs necessary for generating a user-friendly
+                                    data-driven version of Message in the UI.
+                                  type: object
+                                resource:
+                                  description: Resource contains information about
+                                    the Database Service component that reported the
+                                    incident as well as about the K8s resource.
+                                  properties:
+                                    component:
+                                      description: Component is an internal identifier
+                                        of the Database Service subsystem that reported
+                                        the incident.
+                                      type: string
+                                    location:
+                                      description: Location
+                                      properties:
+                                        cluster:
+                                          description: Cluster is the name of the
+                                            cluster of the affected K8S resource.
+                                          type: string
+                                        group:
+                                          description: Group is the Group name of
+                                            the k8s resource.
+                                          type: string
+                                        kind:
+                                          description: Kind is the Kind of the k8s
+                                            resource.
+                                          type: string
+                                        name:
+                                          description: Name is the name of the affected
+                                            K8S resource.
+                                          type: string
+                                        namespace:
+                                          description: Namespace is the namespace
+                                            of the affected K8S resource.
+                                          type: string
+                                        version:
+                                          description: Group is the Version of the
+                                            k8s resource.
+                                          type: string
+                                      type: object
+                                  required:
+                                  - component
+                                  type: object
+                                stackTrace:
+                                  description: StackTrace contains an unstructured
+                                    list of messages from the stack trace.
+                                  items:
+                                    description: CriticalIncidentStackTraceMessage
+                                      contains stack trace information available for
+                                      the incident.
+                                    properties:
+                                      component:
+                                        description: Component is the name of a Database
+                                          Service component that logged the message.
+                                        type: string
+                                      message:
+                                        description: Logged message.
+                                        type: string
+                                    type: object
+                                  type: array
+                                transientUntil:
+                                  description: TransientUntil if present indicates
+                                    that the issue should be considered transient
+                                    until the specified time.
+                                  format: date-time
+                                  type: string
+                              required:
+                              - code
+                              - createTime
+                              - resource
+                              type: object
+                            type: array
+                          exportSubDirectory:
+                            description: ExportSubDirectory is the subdirectory appended
+                              to ExportLocation to store exported files.
+                            type: string
+                          observedGeneration:
+                            format: int64
+                            type: integer
+                          phase:
+                            description: Phase is a summary of current state of the
+                              export.
+                            type: string
+                          reconciled:
+                            type: boolean
+                          startTime:
+                            description: StartTime is the time export started.
+                            format: date-time
+                            type: string
+                        type: object
+                    type: object
+                  latestImport:
+                    description: LatestImport represents the latest import for the
+                      database instance
+                    properties:
+                      creationTimeStamp:
+                        description: CreationTimeStamp represents the creation time
+                          of the import for the database instance
+                        format: date-time
+                        type: string
+                      importName:
+                        description: ImportName is the Name of the latest import
+                        type: string
+                      spec:
+                        description: Spec represents the spec of the import for the
+                          database instance
+                        properties:
+                          databaseName:
+                            description: DatabaseName is the database resource name
+                              within Instance to import into.
+                            type: string
+                          dbclusterRef:
+                            description: DBClusterRef is the dbcluster name within
+                              the same namespace to import into.
+                            type: string
+                          downloadOnly:
+                            default: false
+                            description: DownloadOnly when set to true means dump
+                              file will be downloaded but not imported into DB. Default
+                              is false.
+                            type: boolean
+                          dumpStorage:
+                            description: DumpStorage specifies a storage location
+                              for the import dump files. A user is to ensure proper
+                              read access to the storage bucket from within the Operator.
+                            properties:
+                              gcsOptions:
+                                description: GCSOptions is a reference to GCS dependent
+                                  options.
+                                properties:
+                                  bucket:
+                                    description: 'Bucket is a required field, (ex:
+                                      dbs-dump-bucket) A user is to ensure proper
+                                      write access to the storage bucket from within
+                                      the Operator.'
+                                    type: string
+                                  key:
+                                    description: 'Object key for the dump files. (ex:
+                                      ods-dump/scottschema.dmp).'
+                                    type: string
+                                  secretRef:
+                                    description: SecretRef is a reference to the secret
+                                      that stores GCS access information.
+                                    properties:
+                                      name:
+                                        description: name is unique within a namespace
+                                          to reference a secret resource.
+                                        type: string
+                                      namespace:
+                                        description: namespace defines the space within
+                                          which the secret name must be unique.
+                                        type: string
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                required:
+                                - bucket
+                                - key
+                                type: object
+                              s3Options:
+                                description: 'S3Options is a reference to S3 dependent
+                                  options (Ex: S3 Access Secret, End Point, Region).'
+                                properties:
+                                  bucket:
+                                    description: 'Bucket is a required field, (ex:
+                                      dbs-dump-bucket) A user is to ensure proper
+                                      write access to the storage bucket from within
+                                      the Operator.'
+                                    type: string
+                                  caBundle:
+                                    description: CABundle is a pool of PEM encoded
+                                      CA certs which will be used to validate the
+                                      storageGrid's server certificate.
+                                    items:
+                                      type: string
+                                    type: array
+                                  endpoint:
+                                    description: Endpoint is S3 end point.
+                                    type: string
+                                  key:
+                                    description: 'Object key for the dump files. (ex:
+                                      ods-dump/scottschema.dmp).'
+                                    type: string
+                                  region:
+                                    description: Region is S3 region the bucket resides
+                                      in.
+                                    type: string
+                                  secretRef:
+                                    description: SecretRef is a reference to the secret
+                                      that stores bucket access information.
+                                    properties:
+                                      name:
+                                        description: name is unique within a namespace
+                                          to reference a secret resource.
+                                        type: string
+                                      namespace:
+                                        description: namespace defines the space within
+                                          which the secret name must be unique.
+                                        type: string
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                required:
+                                - bucket
+                                - key
+                                type: object
+                              type:
+                                description: 'Type of Repository (ex: S3, GCS), which
+                                  tells the agent which storage system/API to use.'
+                                enum:
+                                - GCS
+                                - S3
+                                type: string
+                            required:
+                            - type
+                            type: object
+                          logStorage:
+                            description: LogStorage optionally specifies a storage
+                              location to copy import log to. A user is to ensure
+                              proper write access to the storage bucket from within
+                              the Operator.
+                            properties:
+                              gcsOptions:
+                                description: GCSOptions is a reference to GCS dependent
+                                  options.
+                                properties:
+                                  bucket:
+                                    description: 'Bucket is a required field, (ex:
+                                      dbs-dump-bucket) A user is to ensure proper
+                                      write access to the storage bucket from within
+                                      the Operator.'
+                                    type: string
+                                  key:
+                                    description: 'Object key for the dump files. (ex:
+                                      ods-dump/scottschema.dmp).'
+                                    type: string
+                                  secretRef:
+                                    description: SecretRef is a reference to the secret
+                                      that stores GCS access information.
+                                    properties:
+                                      name:
+                                        description: name is unique within a namespace
+                                          to reference a secret resource.
+                                        type: string
+                                      namespace:
+                                        description: namespace defines the space within
+                                          which the secret name must be unique.
+                                        type: string
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                required:
+                                - bucket
+                                - key
+                                type: object
+                              s3Options:
+                                description: 'S3Options is a reference to S3 dependent
+                                  options (Ex: S3 Access Secret, End Point, Region).'
+                                properties:
+                                  bucket:
+                                    description: 'Bucket is a required field, (ex:
+                                      dbs-dump-bucket) A user is to ensure proper
+                                      write access to the storage bucket from within
+                                      the Operator.'
+                                    type: string
+                                  caBundle:
+                                    description: CABundle is a pool of PEM encoded
+                                      CA certs which will be used to validate the
+                                      storageGrid's server certificate.
+                                    items:
+                                      type: string
+                                    type: array
+                                  endpoint:
+                                    description: Endpoint is S3 end point.
+                                    type: string
+                                  key:
+                                    description: 'Object key for the dump files. (ex:
+                                      ods-dump/scottschema.dmp).'
+                                    type: string
+                                  region:
+                                    description: Region is S3 region the bucket resides
+                                      in.
+                                    type: string
+                                  secretRef:
+                                    description: SecretRef is a reference to the secret
+                                      that stores bucket access information.
+                                    properties:
+                                      name:
+                                        description: name is unique within a namespace
+                                          to reference a secret resource.
+                                        type: string
+                                      namespace:
+                                        description: namespace defines the space within
+                                          which the secret name must be unique.
+                                        type: string
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                required:
+                                - bucket
+                                - key
+                                type: object
+                              type:
+                                description: 'Type of Repository (ex: S3, GCS), which
+                                  tells the agent which storage system/API to use.'
+                                enum:
+                                - GCS
+                                - S3
+                                type: string
+                            required:
+                            - type
+                            type: object
+                        required:
+                        - dumpStorage
+                        type: object
+                      status:
+                        description: Status represents the of the latest import for
+                          the database instance
+                        properties:
+                          completeTime:
+                            description: CompleteTime is the time import completed.
+                            format: date-time
+                            type: string
+                          conditions:
+                            description: Conditions represents the latest available
+                              observations of the Entity's current state.
+                            items:
+                              description: "Condition contains details for one aspect
+                                of the current state of this API Resource. --- This
+                                struct is intended for direct use as an array at the
+                                field path .status.conditions.  For example, \n type
+                                FooStatus struct{ // Represents the observations of
+                                a foo's current state. // Known .status.conditions.type
+                                are: \"Available\", \"Progressing\", and \"Degraded\"
+                                // +patchMergeKey=type // +patchStrategy=merge //
+                                +listType=map // +listMapKey=type Conditions []metav1.Condition
+                                `json:\"conditions,omitempty\" patchStrategy:\"merge\"
+                                patchMergeKey:\"type\" protobuf:\"bytes,1,rep,name=conditions\"`
+                                \n // other fields }"
+                              properties:
+                                lastTransitionTime:
+                                  description: lastTransitionTime is the last time
+                                    the condition transitioned from one status to
+                                    another. This should be when the underlying condition
+                                    changed.  If that is not known, then using the
+                                    time when the API field changed is acceptable.
+                                  format: date-time
+                                  type: string
+                                message:
+                                  description: message is a human readable message
+                                    indicating details about the transition. This
+                                    may be an empty string.
+                                  maxLength: 32768
+                                  type: string
+                                observedGeneration:
+                                  description: observedGeneration represents the .metadata.generation
+                                    that the condition was set based upon. For instance,
+                                    if .metadata.generation is currently 12, but the
+                                    .status.conditions[x].observedGeneration is 9,
+                                    the condition is out of date with respect to the
+                                    current state of the instance.
+                                  format: int64
+                                  minimum: 0
+                                  type: integer
+                                reason:
+                                  description: reason contains a programmatic identifier
+                                    indicating the reason for the condition's last
+                                    transition. Producers of specific condition types
+                                    may define expected values and meanings for this
+                                    field, and whether the values are considered a
+                                    guaranteed API. The value should be a CamelCase
+                                    string. This field may not be empty.
+                                  maxLength: 1024
+                                  minLength: 1
+                                  pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                                  type: string
+                                status:
+                                  description: status of the condition, one of True,
+                                    False, Unknown.
+                                  enum:
+                                  - "True"
+                                  - "False"
+                                  - Unknown
+                                  type: string
+                                type:
+                                  description: type of condition in CamelCase or in
+                                    foo.example.com/CamelCase. --- Many .condition.type
+                                    values are consistent across resources like Available,
+                                    but because arbitrary conditions can be useful
+                                    (see .node.status.conditions), the ability to
+                                    deconflict is important. The regex it matches
+                                    is (dns1123SubdomainFmt/)?(qualifiedNameFmt)
+                                  maxLength: 316
+                                  pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                                  type: string
+                              required:
+                              - lastTransitionTime
+                              - message
+                              - reason
+                              - status
+                              - type
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - type
+                            x-kubernetes-list-type: map
+                          criticalIncidents:
+                            description: CriticalIncidents is a flat list of all active
+                              Critical Incidents.
+                            items:
+                              description: CriticalIncident contains all information
+                                about an ongoing critical incident.
+                              properties:
+                                code:
+                                  description: Code is the error code of this particular
+                                    error. Error codes are DBSE+numeric strings, like
+                                    "DBSE1012".
+                                  type: string
+                                createTime:
+                                  description: CreateTime is the timestamp when this
+                                    Incident was created at the origin.
+                                  format: date-time
+                                  type: string
+                                message:
+                                  description: Message describes the incident/error
+                                    that occurred.
+                                  type: string
+                                messageTemplateParams:
+                                  additionalProperties:
+                                    type: string
+                                  description: MessageTemplateParams contains key-value
+                                    pairs necessary for generating a user-friendly
+                                    data-driven version of Message in the UI.
+                                  type: object
+                                resource:
+                                  description: Resource contains information about
+                                    the Database Service component that reported the
+                                    incident as well as about the K8s resource.
+                                  properties:
+                                    component:
+                                      description: Component is an internal identifier
+                                        of the Database Service subsystem that reported
+                                        the incident.
+                                      type: string
+                                    location:
+                                      description: Location
+                                      properties:
+                                        cluster:
+                                          description: Cluster is the name of the
+                                            cluster of the affected K8S resource.
+                                          type: string
+                                        group:
+                                          description: Group is the Group name of
+                                            the k8s resource.
+                                          type: string
+                                        kind:
+                                          description: Kind is the Kind of the k8s
+                                            resource.
+                                          type: string
+                                        name:
+                                          description: Name is the name of the affected
+                                            K8S resource.
+                                          type: string
+                                        namespace:
+                                          description: Namespace is the namespace
+                                            of the affected K8S resource.
+                                          type: string
+                                        version:
+                                          description: Group is the Version of the
+                                            k8s resource.
+                                          type: string
+                                      type: object
+                                  required:
+                                  - component
+                                  type: object
+                                stackTrace:
+                                  description: StackTrace contains an unstructured
+                                    list of messages from the stack trace.
+                                  items:
+                                    description: CriticalIncidentStackTraceMessage
+                                      contains stack trace information available for
+                                      the incident.
+                                    properties:
+                                      component:
+                                        description: Component is the name of a Database
+                                          Service component that logged the message.
+                                        type: string
+                                      message:
+                                        description: Logged message.
+                                        type: string
+                                    type: object
+                                  type: array
+                                transientUntil:
+                                  description: TransientUntil if present indicates
+                                    that the issue should be considered transient
+                                    until the specified time.
+                                  format: date-time
+                                  type: string
+                              required:
+                              - code
+                              - createTime
+                              - resource
+                              type: object
+                            type: array
+                          dumpPath:
+                            description: DumpPath is the path of the downloaded dump
+                              file for download only import.
+                            type: string
+                          observedGeneration:
+                            format: int64
+                            type: integer
+                          phase:
+                            description: Phase is a summary of current state of the
+                              import.
+                            type: string
+                          reconciled:
+                            type: boolean
+                          startTime:
+                            description: StartTime is the time import started.
+                            format: date-time
+                            type: string
+                        type: object
+                    type: object
+                  phase:
+                    description: Phase is a summary of current state of the Instance.
+                    type: string
+                  url:
+                    description: URL represents an IP and a port number info needed
+                      in order to establish a database connection from outside a cluster.
+                    type: string
+                type: object
+              reconciled:
+                type: boolean
+              restoredFrom:
+                description: RestoredFrom is the status showing the most recent restore
+                  source for current DBCluster.
+                properties:
+                  restoredTime:
+                    description: Time point of the source DBCluster this DBCluster
+                      restores from.
+                    format: date-time
+                    type: string
+                  sourceDBCluster:
+                    description: Source DBCluster this DBCluster restores from.
+                    type: string
+                type: object
+              serviceAccounts:
+                additionalProperties:
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                description: ServiceAccounts is a map of k8s service accounts created
+                  during dbcluster provision time to be used by different operations.
+                  Currently, only import is supported.
+                type: object
+              upgradeScheduledAt:
+                description: UpgradeScheduledAt is a timestamp that indicates when
+                  the next upgrade is scheduled to start. If it is nil, it means there
+                  is no upcoming upgrade scheduled.
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
