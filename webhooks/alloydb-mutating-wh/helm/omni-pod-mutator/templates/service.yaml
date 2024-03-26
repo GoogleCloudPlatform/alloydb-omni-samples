@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.deploymentName }}-svc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "omni-pod-mutator.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: https
+      protocol: TCP
+      name: https
+  selector:
+    {{- include "omni-pod-mutator.selectorLabels" . | nindent 4 }}

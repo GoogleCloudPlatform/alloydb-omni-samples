@@ -1,0 +1,26 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ .Values.deploymentName }}-mwhc
+  annotations:
+    cert-manager.io/inject-ca-from: "{{ .Release.Namespace }}/{{ .Values.deploymentName }}-tls-cert"
+webhooks:
+  - name: {{ .Values.webhookConfigName }}
+    clientConfig:
+      service:
+        name: {{ .Values.deploymentName }}-svc
+        namespace: {{ .Release.Namespace }}
+        path: "/mutate"
+        port: {{ .Values.servicePort }}
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: [""] 
+        apiVersions: ["v1"] 
+        resources: ["pods"]
+        scope: "Namespaced"
+    namespaceSelector: 
+      matchLabels:
+        {{ .Values.omniNamespaceLabel }}: {{ .Values.omniNamespaceLabelValue | quote }}
+    failurePolicy: Ignore
+    sideEffects: None
+    admissionReviewVersions: ["v1"]

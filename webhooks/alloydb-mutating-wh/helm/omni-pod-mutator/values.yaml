@@ -1,0 +1,156 @@
+# Default values for omni-pod-mutator.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Replicas of the webhook server. Start with 1 if you would like then scale as needed, no HPA is supplied with this release.
+replicaCount: 2
+
+# You must label your AlloyDB Omni namespace where the DBCluster resource was deployed and update this with your own label name it's value.
+# omniNamespaceLabel: "alloydb.google.com/omni-ns"
+# omniNamespaceLabelValue: "true"
+
+# certManager:
+#   issuer: "alloydb-omni-wh-self-signed"
+
+deploymentName: "alloydb-tolerations-mutator"
+
+# Mutating webhook configurations.
+# webhookConfigs:
+#   name: "webhook.alloydb.google.com"
+
+# Container image specific values go here.
+image:
+  #repository: rmishragcp01/pod-tolerations-mutator-wh
+  repository: gcr.io/rmishra-kubernetes-playground/pod-tolerations-mutator-wh
+  pullPolicy: IfNotPresent
+  tag: "v1.1"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Name of the file which will be mounted on the container as a ConfigMap volume.
+tolerationConfigFile: "tolerations"
+# This must match the mountPath under volumeMounts for tolerations.
+tolerationConfigFilePath: "/etc/tolerations"
+
+# This must match the mountPath under volumeMounts for certificates.
+tlsCertRoot: "/etc/certs"
+# This must match the name of the secret created by the Certificate Manager. Program will use tls.crt and tls.key as cert and key file under this directory.
+#tlsCeryDir: "alloydb-pod-mutator-tls-cert"
+
+# Configure the ConfigMap data to be used by the mutator.
+omniTolerations:
+  - key: cloud.google.com/alloydb-omni-nodes
+    operator: Exists
+    effect: NoSchedule
+  - key: cloud.google.com/gke-nodepool
+    operator: Equal
+    value: alloydb-omni-nodes
+    effect: NoSchedule
+
+# The name of the ConfigMap object must match the name configMapName.
+# Don't alter the secret name, the secret name here would match the secret created post the issuance of a tls cert via the Issuer when a CertificateResource is created.
+# The secret auto-created by the CertManager is named as "{{{ .Values.deploymentName }}}-cert" per it's own Helm template. So you need to change the values.yaml and Certificate template if you want to use a different name.
+volumes:
+- name: tolerations
+  configMap:
+    name: alloydb-tolerations-mutator-cm
+- name: certificates
+  secret:
+    secretName: alloydb-tolerations-mutator-tls-cert
+
+# The name here must be same as the volumes[0].name.
+# The mountPath should match tolerationConfigFilePath.
+volumeMounts:
+- name: tolerations
+  mountPath: "/etc/tolerations"
+  readOnly: true
+- name: certificates
+  mountPath: "/etc/certs"
+  readOnly: true
+
+# The name of the Secret object must match the name secretName.
+
+serviceAccount:
+  create: true
+  automount: false
+  name: "omni-pod-mutator-sa"
+
+podAnnotations:
+  alloydb.cloud.google.com/vendor: "cloud.google.com"
+  alloydb.cloud.google.com/author: "cloud.google.com"
+  alloydb.cloud.google.com/type: "tools"
+
+# Port at which the webhook container will be listening for secured TCP connection, use the same port for service as well.
+container:
+  port: 8443
+
+# podLabels:
+#   app.kubernetes.io/name: pod-mutator-wh
+
+podSecurityContext:
+  fsGroup: 2000
+
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+
+service:
+  type: ClusterIP
+  port: 8443
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /mutate
+    port: https
+    scheme: HTTPS
+    httpHeaders:
+      - name: "User-Agent"
+        value: "Kubelet"
+  periodSeconds: 3
+  initialDelaySeconds: 3
+
+readinessProbe:
+  httpGet:
+    path: /mutate
+    port: https
+    scheme: HTTPS
+    httpHeaders:
+      - name: "User-Agent"
+        value: "Kubelet"
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# This release will not have any HPA, manually spin up the replicas as needed, starting with 1.
+autoscaling:
+  enabled: false
+  # minReplicas: 1
+  # maxReplicas: 4
+  # targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+ingress:
+  enabled: false
+
+# Values to be delegated to the subchart which contains the MutatingWebhookConfiguration.
+webhook-config:
+  deploymentName: "alloydb-tolerations-mutator"
+  webhookConfigName: "webhook.alloydb.toleration.mutator.google.com"
+  omniNamespaceLabel: "kubernetes.io/metadata.name"
+  omniNamespaceLabelValue: "alloydb-pwrx"
+  servicePort: 8443

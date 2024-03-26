@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.deploymentName }}-tls-cert
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ .Values.deploymentName }}-tls-cert
+  dnsNames:
+    - "{{ .Values.deploymentName }}-svc.{{ .Release.Namespace }}"
+    - "{{ .Values.deploymentName }}-svc.{{ .Release.Namespace }}.svc"
+    - "{{ .Values.deploymentName }}-svc.{{ .Release.Namespace }}.svc.cluster.local"
+  issuerRef:
+    name: {{ .Values.deploymentName }}-self-signed
+    kind: Issuer
