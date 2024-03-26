@@ -1,0 +1,119 @@
+# Default values for omni-nodeselector-mutator.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 2
+
+selectotsConfigFile: "selectors"
+selectotsConfigFilePath: "/etc/selectors"
+deploymentName: "alloydb-nodeselector-mutator"
+
+tlsCertRoot: "/etc/certs"
+
+image:
+  #repository: rmishragcp01/pod-nodeselector-mutator-wh
+  repository: gcr.io/rmishra-kubernetes-playground/pod-nodeselector-mutator-wh
+  pullPolicy: IfNotPresent
+  tag: "v1.0"
+
+omniNodeSelector:
+  purpose: "database"
+  storage: "high"
+
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+  name: "omni-nodeselector-mutator-sa"
+
+podAnnotations:
+  alloydb.cloud.google.com/vendor: "cloud.google.com"
+  alloydb.cloud.google.com/author: "cloud.google.com"
+  alloydb.cloud.google.com/type: "tools"
+
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 2000
+
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+
+container:
+  port: 8443
+
+service:
+  type: ClusterIP
+  port: 8443
+
+ingress:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /mutate
+    port: https
+    scheme: HTTPS
+    httpHeaders:
+      - name: "User-Agent"
+        value: "Kubelet"
+  periodSeconds: 3
+  initialDelaySeconds: 3
+
+readinessProbe:
+  httpGet:
+    path: /mutate
+    port: https
+    scheme: HTTPS
+    httpHeaders:
+      - name: "User-Agent"
+        value: "Kubelet"
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+autoscaling:
+  enabled: false
+
+volumes:
+- name: selectors
+  configMap:
+    name: alloydb-nodeselector-mutator-cm
+- name: certificates
+  secret:
+    secretName: alloydb-nodeselector-mutator-tls-cert
+
+volumeMounts:
+- name: selectors
+  mountPath: "/etc/selectors"
+  readOnly: true
+- name: certificates
+  mountPath: "/etc/certs"
+  readOnly: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+webhook-config:
+  deploymentName: "alloydb-nodeselector-mutator"
+  webhookConfigName: "webhook.alloydb.nodeselector.mutator.google.com"
+  omniNamespaceLabel: "kubernetes.io/metadata.name"
+  omniNamespaceLabelValue: "alloydb-pwrx"
+  servicePort: 8443
