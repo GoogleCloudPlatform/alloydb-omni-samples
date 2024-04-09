@@ -1,15 +1,15 @@
 apiVersion: v1
 kind: Secret
 metadata:
-  name: db-pw-foo
+  name: db-pw-dbcluster-sample
 type: Opaque
 data:
-  foo: "Q2hhbmdlTWUxMjM=" # Password is ChangeMe123
+  dbcluster-sample: "Q2hhbmdlTWUxMjM=" # Password is ChangeMe123
 ---
 apiVersion: alloydbomni.dbadmin.goog/v1
 kind: DBCluster
 metadata:
-  name: foo
+  name: dbcluster-sample
 spec:
   databaseVersion: "15.5.1"
   primarySpec:
@@ -29,7 +29,7 @@ spec:
               - another-node-label-value
     adminUser:
       passwordRef:
-        name: db-pw-foo
+        name: db-pw-dbcluster-sample
     resources:
       memory: 5Gi
       cpu: 1
