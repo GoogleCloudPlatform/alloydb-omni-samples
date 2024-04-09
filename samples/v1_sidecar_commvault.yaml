@@ -1,0 +1,76 @@
+# Source: commvault/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cvconfigmap
+data:
+  CV_MASVCNAME: commvault-prod
+  CV_CSHOSTNAME: "tipcs.idcprodcert.loc"
+  CV_CSIPADDR: "123.123.123.123"
+  CV_CSCLIENTNAME: "tipcs"
+  CV_CLIENT_ROLE: "postgres"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: commcell-secret
+data:
+  CV_COMMCELL_USER: Y3ZhZG1pbgo= # commcell username is cvadmin
+  CV_COMMCELL_PWD: Y3ZwYXNzd29yZAo= # commcell password is cvpassword
+---
+apiVersion: alloydbomni.dbadmin.goog/v1
+kind: Sidecar
+metadata:
+  name: cv-sidecar-config
+  annotations:
+    alloydbomni.dbadmin.goog/sidecar: commvault
+spec:
+  sidecars:
+  - name: "commvault-pgsqlagent"
+    image: "commvault/accessnode:11.32.42"
+    lifecycle:
+      preStop:
+        exec:
+          command: [ "/bin/sh", "-c" , "cp /opt/commvault/Base/FwConfig* /etc/CommVaultRegistry/Galaxy/FwConfig/" ]
+    envFrom:
+    - configMapRef:
+        name: cvconfigmap
+    volumeMounts:
+    - name: logdisk
+      mountPath: /archive/
+    - name: tmp-socket
+      mountPath: /tmp
+    - name: commvault-env-store2
+      mountPath: /opt/cvdocker_env
+      readOnly: true
+    - name: backupdisk
+      mountPath: /etc/CommVaultRegistry
+      subPath: Registry
+    - name: backupdisk
+      mountPath: /var/log/commvault/Log_Files
+      subPath: Log_Files
+    - name: backupdisk
+      mountPath: /opt/commvault/MediaAgent/IndexCache
+      subPath: IndexCache
+    - name: backupdisk
+      mountPath: /opt/commvault/iDataAgent/jobResults
+      subPath: jobResults
+    - name: backupdisk
+      mountPath: /opt/commvault/Base/certificates
+      subPath: certificates
+    - name: datadisk
+      mountPath: /mnt/disks/pgsql
+    - name: commcell-secret
+      mountPath: /opt/commcell_secret
+    ports:
+    - name: cvdport
+      containerPort: 8400
+    securityContext:
+      runAsUser: 0
+  additionalVolumes:
+  - name: commcell-secret
+    secret:
+      secretName: commcell-secret
+  - name: commvault-env-store2
+    configMap:
+      name: cvconfigmap
