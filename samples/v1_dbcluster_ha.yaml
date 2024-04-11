@@ -11,7 +11,7 @@ kind: DBCluster
 metadata:
   name: dbcluster-sample
 spec:
-  databaseVersion: "15.5.1"
+  databaseVersion: "15.5.2"
   availability:
     numberOfStandbys: 1
     enableStandbyAsReadReplica: true
