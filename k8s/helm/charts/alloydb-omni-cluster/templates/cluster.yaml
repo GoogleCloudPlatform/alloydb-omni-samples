@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-pw-{{ .Values.cluster_name }}
+  namespace: {{ .Values.cluster_namespace }}
+type: Opaque
+data:
+  {{ .Values.cluster_name }}: {{ .Values.admin_password }}
+---
+apiVersion: alloydbomni.dbadmin.goog/v1
+kind: DBCluster
+metadata:
+  name: {{ .Values.cluster_name }}
+  namespace: {{ required "Value .Values.cluster_namespace is required!" .Values.cluster_namespace }}
+spec:
+  databaseVersion: {{ required "Value .Values.database_version is required!" .Values.database_version }}
+  allowExternalIncomingTraffic: {{ .Values.allow_ext_traffic }}
+  availability:
+    numberOfStandbys: {{ .Values.num_standbys }}
+    {{ if and (eq (.Values.num_standbys | int) 0) (ne .Values.enable_standby_as_read_replicas true) }}
+    enableStandbyAsReadReplica: false
+    {{ end -}}
+    {{- if .Values.enable_standby_as_read_replicas }}
+    enableStandbyAsReadReplica: true
+    {{ end -}}
+    enableAutoHeal: {{ gt (.Values.num_standbys | int) 0 }}
+    enableAutoFailover: {{ gt (.Values.num_standbys | int) 0 }}
+  primarySpec:
+    adminUser:
+      passwordRef:
+        name: "db-pw-{{ .Values.cluster_name }}"
+    {{- if .Values.parameters }}
+    allowExternalIncomingTrafficToInstance: {{ .Values.allow_ext_traffic }}
+    parameters:
+    {{- range $k, $v := .Values.parameters }}
+      {{ $k }}: {{ $v | quote }}
+    {{- end -}}
+    {{- end -}}
+    {{- if .Values.sidecar_name }}
+    sidecarRef:
+      name: {{ .Values.sidecar_name }}
+    {{ end }}
+    {{- if .Values.walArchiveSetting }}
+    walArchiveSetting:
+      location: {{ required "Value .Values.walArchiveSetting.location is required!" .Values.walArchiveSetting.location | quote }}
+    {{- end -}}
+    {{- if or .Values.additional_svc_annotations (not .Values.ext_lb) }}
+    dbLoadBalancerOptions:
+      annotations:
+      {{- if not .Values.ext_lb }}
+        networking.gke.io/load-balancer-type: "internal"
+      {{- end -}}
+      {{- if ne (len .Values.additional_svc_annotations) 0 }}
+      {{- range $k, $v := .Values.additional_svc_annotations }}
+        {{ $k }}: {{ $v | quote }}
+      {{- end }}
+      {{- end }}
+    {{- end }}
+    resources:
+      cpu: {{ required "Value .Values.cpu_count is required and must be an integer!" (.Values.cpu_count | quote) }}
+      memory: {{ required "Value .Values.memory_size is required!" (.Values.memory_size | quote) }}
+      disks:
+      - name: DataDisk
+        size: {{ required "Value .Values.disk_size is required!" (.Values.data_disk_size | quote) }}
+        storageClass: {{ required "Value .Values.storage_class is required!" .Values.storage_class }}

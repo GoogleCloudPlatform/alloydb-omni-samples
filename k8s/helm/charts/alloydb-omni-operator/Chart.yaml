@@ -1,0 +1,6 @@
+apiVersion: v2
+description: Database Service AlloyDB omni operator (including L1 and L2)
+icon: https://storage.mtls.cloud.google.com/alloydb-omni-operator/alloydb.png
+name: alloydb-omni-operator
+type: application
+version: 1.0.0

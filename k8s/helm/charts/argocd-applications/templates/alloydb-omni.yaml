@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: alloydb-omni-operator
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - list:
+      elements:
+      {{- range $i := .Values.clusters }}
+      - cluster: {{ $i.name }}
+        url: {{ $i.url -}}
+      {{ end }}
+  template:
+    metadata:
+      name: alloydb-omni-operator
+      namespace: argocd
+    spec:
+      destination:
+        server: '{{`{{.url}}`}}'
+        namespace: alloydb-omni-system
+      source:
+        repoURL: {{ required "Value .Values.repo is required!" .Values.repo }}
+        targetRevision: {{ .Values.operator_version }}
+        chart: alloydb-omni-operator
+      project: default
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - ApplyOutOfSyncOnly=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alloydb-omni-cluster
+  namespace: argocd
+spec:
+  destination:
+    namespace: alloydb-omni-system
+    server: https://kubernetes.default.svc
+  source:
+    repoURL: {{ required "Value .Values.repo is required!" .Values.repo }}
+    targetRevision: {{ .Values.cluster_revision }}
+    chart: alloydb-omni-cluster
+  project: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true

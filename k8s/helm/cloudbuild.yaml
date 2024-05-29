@@ -1,0 +1,25 @@
+steps:
+  - id: 'build alloydb-omni helm chart builder image'
+    name: 'gcr.io/cloud-builders/docker'
+    script: |
+      docker build -t ${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/alloydb-omni-builder:latest . \
+        --build-arg CHART_VERSION=${_CHART_VERSION}
+      docker push ${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/alloydb-omni-builder:latest
+    automapSubstitutions: true
+  - id: 'push operator helm chart'
+    name: '${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/alloydb-omni-builder:latest'
+    args: ['push', '/alloydb-omni-operator-${_OPERATOR_VERSION}.tgz', 'oci://${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}']
+    automapSubstitutions: true
+  - id: 'push cluster helm chart'
+    name: '${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/alloydb-omni-builder:latest'
+    args: ['push', '/alloydb-omni-cluster-${_CHART_VERSION}.tgz', 'oci://${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}']
+    automapSubstitutions: true
+  - id: 'push argocd applications chart'
+    name: '${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/alloydb-omni-builder:latest'
+    args: ['push', '/alloydb-omni-argocd-applications-${_CHART_VERSION}.tgz', 'oci://${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}']
+    automapSubstitutions: true
+substitutions:
+  _OPERATOR_VERSION: 1.0.0
+options:
+  logging: GCS_ONLY
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET

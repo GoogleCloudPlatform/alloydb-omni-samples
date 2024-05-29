@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-webhook-service
+  namespace: alloydb-omni-system
+spec:
+  ports:
+  - port: 443
+    targetPort: 9443
+  selector:
+    local-control-plane: controller-manager
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: local-serving-cert
+  namespace: alloydb-omni-system
+spec:
+  dnsNames:
+  - local-webhook-service.alloydb-omni-system.svc
+  - local-webhook-service.alloydb-omni-system.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: local-selfsigned-issuer
+  secretName: local-webhook-server-cert
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: local-selfsigned-issuer
+  namespace: alloydb-omni-system
+spec:
+  selfSigned: {}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: alloydb-omni-system/local-serving-cert
+  name: local-mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: local-webhook-service
+      namespace: alloydb-omni-system
+      path: /mutate-alloydbomni-internal-dbadmin-goog-v1-instance
+  failurePolicy: Fail
+  name: vinstance.alloydbomni.internal.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.internal.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - instances
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: alloydb-omni-system/local-serving-cert
+  name: local-validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: local-webhook-service
+      namespace: alloydb-omni-system
+      path: /validate-alloydbomni-internal-dbadmin-goog-v1-instance
+  failurePolicy: Fail
+  name: vinstance.alloydbomni.internal.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.internal.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - instances
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: local-webhook-service
+      namespace: alloydb-omni-system
+      path: /validate-alloydbomni-internal-dbadmin-goog-v1-instancerestore
+  failurePolicy: Fail
+  name: vinstancerestore.alloydbomni.internal.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.internal.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - instancerestores
+  sideEffects: None

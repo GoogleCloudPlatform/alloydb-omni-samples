@@ -1,0 +1,221 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-webhook-service
+  namespace: alloydb-omni-system
+spec:
+  ports:
+  - port: 443
+    targetPort: 9443
+  selector:
+    fleet-control-plane: controller-manager
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fleet-serving-cert
+  namespace: alloydb-omni-system
+spec:
+  dnsNames:
+  - fleet-webhook-service.alloydb-omni-system.svc
+  - fleet-webhook-service.alloydb-omni-system.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: fleet-selfsigned-issuer
+  secretName: fleet-webhook-server-cert
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: fleet-selfsigned-issuer
+  namespace: alloydb-omni-system
+spec:
+  selfSigned: {}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: alloydb-omni-system/fleet-serving-cert
+  name: fleet-mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: fleet-webhook-service
+      namespace: alloydb-omni-system
+      path: /mutate-alloydbomni-dbadmin-goog-v1-failover
+  failurePolicy: Fail
+  name: mfailover.alloydbomni.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - failovers
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: fleet-webhook-service
+      namespace: alloydb-omni-system
+      path: /mutate-alloydbomni-dbadmin-goog-v1-switchover
+  failurePolicy: Fail
+  name: mswitchover.alloydbomni.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - switchovers
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: fleet-webhook-service
+      namespace: alloydb-omni-system
+      path: /mutate-alloydbomni-dbadmin-goog-v1-dbcluster
+  failurePolicy: Fail
+  name: mdbcluster.alloydbomni.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - dbclusters
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: alloydb-omni-system/fleet-serving-cert
+  name: fleet-validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: fleet-webhook-service
+      namespace: alloydb-omni-system
+      path: /validate-alloydbomni-dbadmin-goog-v1-backup
+  failurePolicy: Fail
+  name: vbackup.alloydbomni.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - backups
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: fleet-webhook-service
+      namespace: alloydb-omni-system
+      path: /validate-alloydbomni-dbadmin-goog-v1-backupplan
+  failurePolicy: Fail
+  name: vbackupplan.alloydbomni.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - backupplans
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: fleet-webhook-service
+      namespace: alloydb-omni-system
+      path: /validate-alloydbomni-dbadmin-goog-v1-dbcluster
+  failurePolicy: Fail
+  name: vdbcluster.alloydbomni.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - dbclusters
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: fleet-webhook-service
+      namespace: alloydb-omni-system
+      path: /validate-alloydbomni-dbadmin-goog-v1-restore
+  failurePolicy: Fail
+  name: vrestore.alloydbomni.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - restores
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  clientConfig:
+    service:
+      name: fleet-webhook-service
+      namespace: alloydb-omni-system
+      path: /validate-alloydbomni-dbadmin-goog-v1-sidecar
+  failurePolicy: Fail
+  name: vsidecar.alloydbomni.dbadmin.goog
+  rules:
+  - apiGroups:
+    - alloydbomni.dbadmin.goog
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - sidecars
+  sideEffects: None

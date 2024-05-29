@@ -1,0 +1,11 @@
+# Each AlloyDB Omni Operator Image URL is composed as:
+# <image registry>/<image repository>/<optional image sub-repository>/<image name>:<image tag>
+# For example, a database image URL can be "gcr.io/alloydb-omni/pg-service:15.5.0",
+# where its image registry is "gcr.io" and its image repository is "alloydb-omni".
+image:
+  # Custom image registry from which AlloyDB Omni Operator images are pulled
+  registry: gcr.io
+  # Custom image repository from which AlloyDB Omni Operator images are pulled
+  repository: alloydb-omni
+  # For internal development only. DO NOT OVERRIDE IT
+  dataplane-repository: ""
