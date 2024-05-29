@@ -1,0 +1,711 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: alloydbomni-selfsigned-cluster-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-controller-manager
+  namespace: alloydb-omni-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-leader-election-role
+  namespace: alloydb-omni-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - backupplans
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - backupplans/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - backupplans/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - backups
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - backups/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - backups/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - dbclusters
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - dbclusters/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - dbclusters/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - dbinstances
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - dbinstances/status
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - failovers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - failovers/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - restores
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - restores/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - restores/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - sidecars
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - sidecars/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - sidecars/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - switchovers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - switchovers/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - createstandbyjobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - deletestandbyjobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - failovers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - failovers/status
+  verbs:
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instancebackupplans
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instancebackupplans/status
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instancebackups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instancebackups/status
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instancerestores
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instancerestores/status
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instances
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instances/status
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instanceswitchovers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - instanceswitchovers/status
+  verbs:
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - replicationconfigs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - replicationconfigs/status
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - sidecars
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - alloydbomni.internal.dbadmin.goog
+  resources:
+  - sidecars/status
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - baremetal.cluster.gke.io
+  resources:
+  - clusters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - certificates
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cert-manager.io
+  resources:
+  - issuers
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - network.private.gdc.goog
+  resources:
+  - dnsregistrations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-metrics-reader
+rules:
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-proxy-role
+rules:
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-leader-election-rolebinding
+  namespace: alloydb-omni-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fleet-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: fleet-controller-manager
+  namespace: alloydb-omni-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fleet-manager-role
+subjects:
+- kind: ServiceAccount
+  name: fleet-controller-manager
+  namespace: alloydb-omni-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-proxy-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fleet-proxy-role
+subjects:
+- kind: ServiceAccount
+  name: fleet-controller-manager
+  namespace: alloydb-omni-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    control-plane: controller-manager
+  name: fleet-controller-manager-metrics-service
+  namespace: alloydb-omni-system
+spec:
+  ports:
+  - name: https
+    port: 8443
+    targetPort: https
+  selector:
+    control-plane: controller-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    fleet-control-plane: controller-manager
+  name: fleet-controller-manager
+  namespace: alloydb-omni-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      fleet-control-plane: controller-manager
+  template:
+    metadata:
+      labels:
+        fleet-control-plane: controller-manager
+    spec:
+      containers:
+      - args:
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=127.0.0.1:8080
+        - --leader-elect
+        - --image-registry={{ .Values.image.registry}}
+        - --data-plane-image-repository={{ index .Values.image "dataplane-repository" }}
+        - --control-plane-agents-image-repository={{ .Values.image.repository}}
+        - --control-plane-agents-tag={{ .Chart.Version }}
+        - --additional-db-versions-for-test-only=latest
+        command:
+        - /manager
+        image: {{ .Values.image.registry}}/{{ .Values.image.repository}}/operator/fleet-operator:{{ .Chart.Version }}
+        imagePullPolicy: Always
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: manager
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1024Mi
+          requests:
+            cpu: 500m
+            memory: 1024Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+        volumeMounts:
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: cert
+          readOnly: true
+      - args:
+        - --secure-listen-address=0.0.0.0:8443
+        - --upstream=http://127.0.0.1:8080/
+        - --logtostderr=true
+        - --v=10
+        image: {{ .Values.image.registry}}/kubebuilder/kube-rbac-proxy:v0.16.0
+        name: kube-rbac-proxy
+        ports:
+        - containerPort: 8443
+          name: https
+      serviceAccountName: fleet-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: cert
+        secret:
+          defaultMode: 420
+          secretName: fleet-webhook-server-cert

@@ -1,0 +1,6 @@
+repo: <REPO>
+operator_version: 1.0.*
+cluster_revision: 1.0.*
+clusters:
+- name: in-cluster
+  url: https://kubernetes.default.svc

@@ -1,0 +1,27 @@
+admin_password: "Y2hhbmdlbWUxMjM="
+database_version: "15.5.2"
+cpu_count: "2"
+memory_size: "16Gi"
+data_disk_size: "100Gi"
+cluster_name: test
+cluster_namespace: default
+num_standbys: 1
+num_readpool: 1
+enable_standby_as_read_replicas: false
+ext_lb: false
+allow_ext_traffic: true
+storage_class: "standard-disk"
+additional_svc_annotations:
+  test1: "value1"
+  test2: "value2"
+walArchiveSetting:
+  location: "wal/log"
+pgadmin:
+  enabled: true
+parameters:
+  alloydb.iam_authentication: true
+  alloydb.enable_pgaudit: true
+  pgaudit.log: "ROLE,DDL,MISC"
+  ssl_min_protocol_version: "TLSv1.2"
+  log_connections: true
+  log_disconnections: true

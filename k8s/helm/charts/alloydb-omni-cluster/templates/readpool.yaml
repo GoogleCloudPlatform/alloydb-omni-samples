@@ -1,0 +1,12 @@
+{{- range $i := until (.Values.num_readpool | int) }}
+apiVersion: alloydbomni.dbadmin.goog/v1
+kind: DBInstance
+metadata:
+  name: {{ required "Value .Values.cluster_name is required!" $.Values.cluster_name }}-readpool-{{ $i }}
+  namespace: {{ required "Value .Values.cluster_namespace is required!" $.Values.cluster_namespace }}
+spec:
+  instanceType: ReadPool
+  dbcParent:
+    name: {{ $.Values.cluster_name }}
+---
+{{ end -}}

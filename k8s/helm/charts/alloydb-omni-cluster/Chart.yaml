@@ -1,0 +1,11 @@
+apiVersion: v2
+description: AlloyDB Cluster
+icon: https://storage.mtls.cloud.google.com/alloydb-omni-operator/alloydb.png
+name: alloydb-omni-cluster
+type: application
+version: 1.0.0
+dependencies:
+  - name: pgadmin4
+    repository: https://helm.runix.net
+    version: 1.25.1
+    condition: pgadmin.enabled
