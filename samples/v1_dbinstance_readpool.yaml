@@ -6,6 +6,7 @@ spec:
   instanceType: ReadPool
   dbcParent:
     name: dbcluster-sample
+  nodeCount: 2
   resources:
     memory: 6Gi
     cpu: 2
