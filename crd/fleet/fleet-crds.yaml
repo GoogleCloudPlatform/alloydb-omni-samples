@@ -1543,7 +1543,7 @@ spec:
                             description: If the affinity requirements specified by
                               this field isn't met at scheduling time, the pod will
                               not be scheduled onto the node. If the affinity requirements
-                              specified by this field stop to be met at some point
+                              specified by this field aren't met at some point
                               during pod execution (e.g. due to an update), the system
                               might or might not try to eventually evict the pod from
                               its node.
@@ -1814,14 +1814,14 @@ spec:
                             description: If the affinity requirements specified by
                               this field isn't met at scheduling time, the pod will
                               not be scheduled onto the node. If the affinity requirements
-                              specified by this field stop to be met at some point
-                              during pod execution - example, due to a pod label update -
+                              specified by this field aren't met at some point
+                              during pod execution - for example, due to a pod label update -
                               the system might or might not try to eventually evict the
                               pod from its node. When there are multiple elements,
                               the lists of nodes corresponding to each podAffinityTerm
-                              are intersected, which means that, all terms must be satisfied.
+                              are intersected, which means that all terms must be satisfied.
                             items:
-                              description: Defines a set of pods — namely those matching
+                              description: Defines a set of pods — namely, those matching
                                 the labelSelector relative to the given namespace(s) —
                                 that this pod must be co-located (affinity) or not
                                 co-located (anti-affinity) with. Co-located
@@ -2142,9 +2142,9 @@ spec:
                               label update), the system might or might not try to eventually
                               evict the pod from its node. When there are multiple
                               elements, the lists of nodes corresponding to each podAffinityTerm
-                              are intersected, which means that, all terms must be satisfied.
+                              are intersected, which means that all terms must be satisfied.
                             items:
-                              description: Defines a set of pods — namely those matching
+                              description: Defines a set of pods — namely, those matching
                                 the labelSelector relative to the given namespace(s) —
                                 that this pod must be co-located (affinity) or not
                                 co-located (anti-affinity) with. Co-located is defined
@@ -4196,7 +4196,7 @@ spec:
                         description: If the affinity requirements specified by this
                           field isn't met at scheduling time, the pod is not
                           scheduled onto the node. If the affinity requirements specified
-                          by this field stop to be met at some point during pod execution
+                          by this field aren't met at some point during pod execution
                           (e.g. due to an update), the system might or might not try to
                           eventually evict the pod from its node.
                         properties:
@@ -4458,14 +4458,14 @@ spec:
                         description: If the affinity requirements specified by this
                           field isn't met at scheduling time, the pod is not
                           scheduled onto the node. If the affinity requirements specified
-                          by this field stop to be met at some point during pod execution
-                          - example, due to a pod label update - the system might or might
+                          by this field aren't met at some point during pod execution
+                          - for example, due to a pod label update - the system might or might
                           not try to eventually evict the pod from its node. When
                           there are multiple elements, the lists of nodes corresponding
                           to each podAffinityTerm are intersected, in other words, all terms
                           must be satisfied.
                         items:
-                          description: Defines a set of pods — namely those matching
+                          description: Defines a set of pods — namely, those matching
                             the labelSelector relative to the given namespace(s) —
                             that this pod must be co-located (affinity) or not co-located
                             (anti-affinity) with. Co-located is defined as running
@@ -4766,14 +4766,14 @@ spec:
                         description: If the anti-affinity requirements specified by
                           this field isn't met at scheduling time, the pod will
                           not be scheduled onto the node. If the anti-affinity requirements
-                          specified by this field stop to be met at some point during
-                          pod execution - example, due to a pod label update - the system
+                          specified by this field aren't met at some point during
+                          pod execution - for example, due to a pod label update - the system
                           might or might not try to eventually evict the pod from its
                           node. When there are multiple elements, the lists of nodes
                           corresponding to each podAffinityTerm are intersected, which means
-                          that, all terms must be satisfied.
+                          that all terms must be satisfied.
                         items:
-                          description: Defines a set of pods — namely those matching
+                          description: Defines a set of pods — namely, those matching
                             the labelSelector relative to the given namespace(s) —
                             that this pod must be co-located (affinity) or not co-located
                             (anti-affinity) with. Co-located is defined as running
