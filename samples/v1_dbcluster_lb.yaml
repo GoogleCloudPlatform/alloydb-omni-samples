@@ -1,4 +1,3 @@
-# This is a minimal DBCluster spec. See v1_dbcluster_full.yaml for more configurations.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -23,3 +22,8 @@ spec:
       disks:
       - name: DataDisk
         size: 10Gi
+    dbLoadBalancerOptions:
+      annotations:
+        # Creates internal LoadBalancer in GKE.
+        networking.gke.io/load-balancer-type: "internal"
+  allowExternalIncomingTraffic: true
