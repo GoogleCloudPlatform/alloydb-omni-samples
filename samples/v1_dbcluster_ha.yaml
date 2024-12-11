@@ -11,47 +11,11 @@ kind: DBCluster
 metadata:
   name: dbcluster-sample
 spec:
-  databaseVersion: "15.5.1"
+  databaseVersion: "15.7.0"
   availability:
     numberOfStandbys: 1
     enableStandbyAsReadReplica: true
   primarySpec:
-    schedulingconfig:
-      tolerations:
-      - key: "node-role.kubernetes.io/control-plane"
-        operator: "Exists"
-        effect: "NoSchedule"
-      nodeaffinity:
-        preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 1
-          preference:
-            matchExpressions:
-            - key: another-node-label-key
-              operator: In
-              values:
-              - another-node-label-value
-      podAffinity:
-        preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 1
-          podAffinityTerm:
-            labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - store
-            topologyKey: "kubernetes.io/hostname"
-      podAntiAffinity:
-        preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 1
-          podAffinityTerm:
-            labelSelector:
-              matchExpressions:
-              - key: security
-                operator: In
-                values:
-                - S1
-            topologyKey: "topology.kubernetes.io/zone"
     adminUser:
       passwordRef:
         name: db-pw-dbcluster-sample
@@ -61,7 +25,3 @@ spec:
       disks:
       - name: DataDisk
         size: 10Gi
-    dbLoadBalancerOptions:
-      annotations:
-        networking.gke.io/load-balancer-type: "internal"
-  allowExternalIncomingTraffic: true
