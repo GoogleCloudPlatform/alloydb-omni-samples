@@ -123,7 +123,7 @@ kubectl wait --for=condition=Ready pod/"$podName" -n "$ns" --timeout=120s
 
 echo "Alias pg15 data directory"
 # Perform database upgrade steps (PostgreSQL 15 to 16)
-kubectl exec -ti "$podName" -n "$ns" -c database -- /bin/bash -c "
+kubectl exec -i "$podName" -n "$ns" -c database -- /bin/bash -c "
   supervisorctl.par stop postgres;
   mkdir -p /mnt/disks/pgsql/15;
   mv /mnt/disks/pgsql/data /mnt/disks/pgsql/15/data;
@@ -143,7 +143,7 @@ kubectl patch dbclusters.alloydbomni.dbadmin.goog "$dbcName" -n "$ns" --type=mer
 kubectl wait --for=jsonpath='{.status.primary.currentDatabaseVersion}'="'$newDBVersion'" dbcluster/"$dbcName" -n "$ns" --timeout=240s
 
 # Perform post-upgrade steps
-kubectl exec -ti "$podName" -n "$ns" -c database -- /bin/bash -c "
+kubectl exec -i "$podName" -n "$ns" -c database -- /bin/bash -c "
   supervisorctl.par stop postgres;
   rm -fr /mnt/disks/pgsql/data;
   initdb -D /mnt/disks/pgsql/data -U alloydbadmin --data-checksums --encoding=UTF8 --locale=C --locale-provider=icu --icu-locale=und-x-icu --auth-host=trust --auth-local=reject;
