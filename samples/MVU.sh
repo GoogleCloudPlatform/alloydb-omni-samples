@@ -5,7 +5,7 @@ set -o errexit
 set -o pipefail
 
 # CPA and database are bundled together
-# ./mvu.sh 1.16.3 1.4.0 dbcluster-sample
+# ./mvu.sh 16.3.0 1.4.0 dbcluster-sample
 
 # DBCluster name and Namespace
 if [[ $# -lt 1 || $# -gt 4 ]]; then
