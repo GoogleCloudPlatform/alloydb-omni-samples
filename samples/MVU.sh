@@ -203,9 +203,9 @@ kubectl exec -i "$podName" -n "$ns" -c database -- /bin/bash -c "
   rm -fr /mnt/disks/pgsql/data;
   initdb -D /mnt/disks/pgsql/data -U alloydbadmin --data-checksums --encoding=UTF8 --locale=C --locale-provider=icu --icu-locale=und-x-icu --auth-host=trust --auth-local=reject;
   cd ~;
-  cp /mnt/disks/pgsql/15/data/pg_hba.conf /mnt/disks/pgsql/15/data/pg_hba.conf.bak;
-  echo \"local   all     all             trust\" >> /mnt/disks/pgsql/15/data/pg_hba.conf;
-  echo \"host    all     all     127.0.0.1/32      trust\" >> /mnt/disks/pgsql/15/data/pg_hba.conf;
+  cp /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf.bak;
+  echo \"local   all     all             trust\" >> /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf;
+  echo \"host    all     all     127.0.0.1/32      trust\" >> /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf;
   rm /mnt/disks/pgsql/data/pg_hba.conf;
   echo \"local   all     all             trust\" >> /mnt/disks/pgsql/data/pg_hba.conf;
   echo \"host    all     all     127.0.0.1/32      trust\" >> /mnt/disks/pgsql/data/pg_hba.conf;
