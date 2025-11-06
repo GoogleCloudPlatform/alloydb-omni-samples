@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: alloydb-omni-kube-state-metrics
+  namespace: alloydb-omni-system
+  name: kube-state-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alloydb-omni-kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alloydb-omni-kube-state-metrics
+    spec:
+      automountServiceAccountToken: true
+      containers:
+      - name: kube-state-metrics
+        image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.14.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - --port=8080
+        - --telemetry-port=8081
+        - --custom-resource-state-config-file=/var/ksm/internal/config.yaml
+        - --custom-resource-state-only=true
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics-self
+          containerPort: 8081
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 100m
+            memory: 190Mi
+          limits:
+            memory: 250Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          privileged: false
+          capabilities:
+            drop:
+            - all
+          runAsUser: 1000
+          runAsGroup: 1000
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8081
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+        volumeMounts:
+        - mountPath: /var/ksm/internal
+          name: ksm-configmap-volume
+      serviceAccountName: kube-state-metrics
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: kube-state-metrics
+        name: ksm-configmap-volume
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: alloydb-omni-kube-state-metrics
+    alloydbomni.internal.dbadmin.goog/task-type: monitoring
+  namespace: alloydb-omni-system
+  name: kube-state-metrics
+spec:
+  clusterIP: None
+  ports:
+  - name: metricsalloydbomni
+    port: 8080
+    targetPort: metrics
+  - name: metrics-self
+    port: 8081
+    targetPort: metrics-self
+  selector:
+    app.kubernetes.io/name: alloydb-omni-kube-state-metrics
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: alloydb-omni-system
+  name: kube-state-metrics
+  labels:
+    app.kubernetes.io/name: alloydb-omni-kube-state-metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloydb-omni-system:kube-state-metrics
+  labels:
+    app.kubernetes.io/name: alloydb-omni-kube-state-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloydb-omni-system:kube-state-metrics
+subjects:
+- kind: ServiceAccount
+  namespace: alloydb-omni-system
+  name: kube-state-metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloydb-omni-system:kube-state-metrics
+  labels:
+    app.kubernetes.io/name: alloydb-omni-kube-state-metrics
+rules:
+- apiGroups:
+  - alloydbomni.dbadmin.goog
+  resources:
+  - "*"
+  verbs:
+  - list
+  - watch
+  - get
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - list
+  - watch
+  - get

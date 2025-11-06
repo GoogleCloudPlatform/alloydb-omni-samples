@@ -1,0 +1,149 @@
+apiVersion: v1
+data:
+  config.yaml: |
+    kind: CustomResourceStateMetrics
+    spec:
+      resources:
+      - groupVersionKind:
+          group: alloydbomni.dbadmin.goog
+          kind: DBCluster
+          version: v1
+        metricNamePrefix: alloydb_omni_dbcluster
+        labelsFromPath:
+          dbcluster: [metadata, name]
+          namespace: [metadata, namespace]
+        metrics:
+        - name: "ha_ready"
+          help: "HA readiness of the dbcluster, 1 if ha-ready, 0 if not ha-ready"
+          each:
+            type: Gauge
+            gauge:
+              path: [status, conditions, "[type=HAReady]", status]
+              nilIsZero: true
+          labelsFromPath:
+            reason: [status, conditions, "[type=HAReady]", reason]
+        - name: "primary_ready"
+          help: "Readiness of the dbcluster primary node, 1 if ready, 0 if not ready"
+          each:
+            type: Gauge
+            gauge:
+              path: [status, primary, conditions, "[type=DatabaseReady]", status]
+              nilIsZero: true
+          labelsFromPath:
+            reason: [status, primary, conditions, "[type=DatabaseReady]", reason]
+        - name: "status_info"
+          help: "current status of the dbcluster"
+          each:
+            type: Info
+            info:
+              labelsFromPath:
+                phase: [status, phase]
+                database_version: [status, primary, currentDatabaseVersion]
+                controlplane_agents_version: [status, primary, currentControlPlaneAgentsVersion]
+                read_write_endpoint: [status, primary, endpoints, "[name=Read-Write]", value]
+                read_only_endpoint: [status, primary, endpoints, "[name=Read-Only]", value]
+                primary_phase: [status, primary, phase]
+                haready_status: [status, conditions, "[type=HAReady]", status]
+                haready_reason: [status, conditions, "[type=HAReady]", reason]
+        - name: "spec_info"
+          help: "spec of the dbcluster"
+          each:
+            type: Info
+            info:
+              labelsFromPath:
+                num_standbys: [spec, availability, numberOfStandbys]
+                database_version: [spec, databaseVersion]
+                controlplane_agents_version: [spec, controlPlaneAgentsVersion]
+                is_deleted: [spec, isDeleted]
+                allow_external_incoming_traffic: [spec, allowExternalIncomingTraffic]
+        - name: "spec_num_standbys"
+          help: "numberOfStandbys defined in the dbcluster spec"
+          each:
+            type: gauge
+            gauge:
+              path: [spec, availability, numberOfStandbys]
+              nilIsZero: true
+        - name: "critical_incident_info"
+          help: "dbcluster critical incidents"
+          each:
+            type: Info
+            info:
+              path: [status, criticalIncidents]
+              labelsFromPath:
+                create_time: [createTime]
+                message: [message]
+                code: [code]
+        - name: "critical_incident_create_time"
+          help: "dbcluster critical incident create time"
+          each:
+            type: Gauge
+            gauge:
+              path: [status, criticalIncidents]
+              labelsFromPath:
+                message: [message]
+                code: [code]
+              valueFrom: [createTime]
+      - groupVersionKind:
+          group: alloydbomni.dbadmin.goog
+          kind: Failover
+          version: v1
+        metricNamePrefix: alloydb_omni_failover
+        labelsFromPath:
+          dbcluster: [spec, dbclusterRef]
+          namespace: [metadata, namespace]
+          failover: [metadata, name]
+        metrics:
+        - name: "start_time"
+          help: "failover startTime"
+          each:
+            type: Gauge
+            gauge:
+              path: [status, startTime]
+          labelsFromPath:
+            state: [status, state]
+            phase: [status, internal, phase]
+        - name: "end_time"
+          help: "failover endTime"
+          each:
+            type: Gauge
+            gauge:
+              path: [status, endTime]
+          labelsFromPath:
+            state: [status, state]
+            phase: [status, internal, phase]
+        - name: "status_info"
+          help: "failover status"
+          each:
+            type: Info
+            info:
+              path: [status]
+              labelsFromPath:
+                start_time: [startTime]
+                end_time: [endTime]
+                new_primary: [internal, newPrimary]
+                old_primary: [internal, oldPrimary]
+                phase: [internal, phase]
+                state: [state]
+      - groupVersionKind:
+          group: alloydbomni.dbadmin.goog
+          kind: PgBouncer
+          version: v1
+        metricNamePrefix: alloydb_omni_pgbouncer
+        labelsFromPath:
+          dbcluster: [spec, dbclusterRef]
+          namespace: [metadata, namespace]
+          pgbouncer: [metadata, name]
+        metrics:
+        - name: "status_info"
+          help: "pgbouncer status"
+          each:
+            type: Info
+            info:
+              path: [status]
+              labelsFromPath:
+                endpoint: [ipAddress]
+                phase: [phase]
+kind: ConfigMap
+metadata:
+  name: kube-state-metrics
+  namespace: alloydb-omni-system
