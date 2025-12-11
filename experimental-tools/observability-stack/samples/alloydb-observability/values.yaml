@@ -128,8 +128,28 @@ kube-prometheus-stack:
     enabled: true
     adminPassword: admin
 
-mode: daemonset
-presets:
-  logsCollection:
+opentelemetry-collector:
+   enabled: true
+   mode: daemonset
+   presets:
+     logsCollection:
+       enabled: true
+   config:
+    exporters:
+      otlphttp/loki:
+        # We need to replace this endpoint when we install Loki
+        endpoint: http://<LOKI-SVC>:3100/otlp 
+        tls:
+          insecure: true
+    service:
+      pipelines:
+        logs:
+          exporters: [otlphttp/loki]
+
+loki:
+  enabled: true
+  loki:
+    auth_enabled: false
+  minio:
     enabled: true
 
