@@ -1,24 +1,13 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
-metadata:
-  name: alloydb-omni-metrics
-  namespace: {{ .Values.kpsNamespace | quote }}
+#This is the recipe: I want 
 spec:
-  # The namespace where the *Service* you want to scrape lives
-  namespaceSelector:
-    matchNames:
-      - {{ .Values.alloydb.namespace | quote }}
-
-  # How to find the Service (by its labels)
   selector:
     matchLabels:
-      app: {{ .Values.alloydb.appLabel | quote }}
-
+#in values my app is alloydb-omni.
+      app: {{.Values.alloydb.appLabel | quote}}
   endpoints:
-    - # Port where metrics are exposed
-      # If your Service's port has a *name*, it's better to use that name here.
-      # If not, using the number is okay.
-      port: {{ .Values.alloydb.metricsPort | quote }}
-      path: /metrics
-      interval: 30s
-
+  - port: {{.Values.alloydb.metricsPort}}
+  #if path is empty defaults to /metrics
+  # interval at which data is scraped
+  interval: {{.Values.alloydb.interval | quote}}

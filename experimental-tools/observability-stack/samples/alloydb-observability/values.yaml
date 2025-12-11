@@ -106,25 +106,22 @@ tolerations: []
 
 affinity: {}
 
-# Where kube-prometheus-stack will be installed
+# Where kube-prometheus-stack is
 kpsNamespace: monitoring
 
 alloydb:
   namespace: alloydb-omni-system
   appLabel: alloydb-omni
   metricsPort: 9187
+  interval: 25s 
 
-# Pass-through values for kube-prometheus-stack itself
 kube-prometheus-stack:
-  # So everything lands in the same namespace we install the release into
   global:
     rbac:
       create: true
 
   prometheus:
     prometheusSpec:
-      # Use the default "release=" selector; we'll label our ServiceMonitor accordingly.
-      # (We don't need to change selectors, just match them.)
       serviceMonitorSelectorNilUsesHelmValues: false
 
   grafana:
