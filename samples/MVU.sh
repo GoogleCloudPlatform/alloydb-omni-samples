@@ -190,7 +190,7 @@ secCreationTimestamp=$(kubectl get pods -n "$ns" "$podName" -o jsonpath='{.metad
 
 echo "Update database version to $newDBVersion and recommended CPA version to $newCPAVersion"
 # Patch DBCluster to upgrade databaseVersion
-kubectl patch dbclusters.alloydbomni.dbadmin.goog "$dbcName" -n "$ns" --type=merge -p '{"spec":{"databaseVersion":"'$newDBVersion'","controlPlaneAgentsVersion": "'$newCPAVersion'"}}'
+kubectl patch dbclusters.alloydbomni.dbadmin.goog "$dbcName" -n "$ns" --type=merge -p '{"spec":{"databaseVersion":"'$newDBVersion'","controlPlaneAgentsVersion": "'$newCPAVersion'","databaseImageOSType":"UBI9"}}'
 
 waitForPodRestart "$secCreationTimestamp"
 
