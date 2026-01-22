@@ -80,7 +80,7 @@ spec:
     parameters:
       google_columnar_engine.enabled: "on"
       google_columnar_engine.memory_size_in_mb: "256"
-      shared_preloaded_libraries: "pg_cron,pg_bigm3"
+      shared_preload_libraries: "pg_cron,pg_bigm3"
 # operator default values
 # shared_preload_libraries='g_stats,google_columnar_engine,google_db_advisor,google_job_scheduler,pg_stat_statements,pglogical,pgaudit'
       log_rotation_age: "2" # rotate every two minutes. Set to "0" to disable age-based rotation. If unset, no age-based rotation
