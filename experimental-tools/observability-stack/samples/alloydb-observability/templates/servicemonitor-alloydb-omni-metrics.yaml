@@ -1,0 +1,13 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+#This is the recipe: I want 
+spec:
+  selector:
+    matchLabels:
+#in values my app is alloydb-omni.
+      app: {{.Values.alloydb.appLabel | quote}}
+  endpoints:
+  - port: {{.Values.alloydb.metricsPort}}
+  #if path is empty defaults to /metrics
+  # interval at which data is scraped
+  interval: {{.Values.alloydb.interval | quote}}
