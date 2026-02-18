@@ -139,8 +139,7 @@ opentelemetry-collector:
    config:
     exporters:
       otlphttp/loki:
-        # We need to replace this endpoint when we install Loki
-        endpoint: http://alloydb-observability-loki:3100/otlp 
+        endpoint: http://{{ .Release.Name }}-loki:3100/otlp
         tls:
           insecure: true
     service:
