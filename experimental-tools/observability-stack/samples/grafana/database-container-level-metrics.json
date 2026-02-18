@@ -607,7 +607,7 @@
         {
           "editorMode": "code",
           "expr": "alloydb_omni_database_postgresql_vacuum_transaction_id_utilization_percentage{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}",
-          "legendFormat": "__auto",
+          "legendFormat": "{{dbnode}}",
           "range": true,
           "refId": "A"
         }
