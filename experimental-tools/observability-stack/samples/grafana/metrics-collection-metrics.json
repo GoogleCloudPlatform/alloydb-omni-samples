@@ -297,7 +297,7 @@
           "query": "label_values(alloydb_omni_database_postgresql_up,dbnamespace)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
-        "refresh": 1,
+        "refresh": 2,
         "regex": "",
         "type": "query"
       },
