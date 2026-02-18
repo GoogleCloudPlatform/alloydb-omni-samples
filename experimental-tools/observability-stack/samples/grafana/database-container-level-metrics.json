@@ -870,7 +870,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(alloydb_omni_database_postgresql_chill_cache_num_hits_total{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}[5m]) / clamp_min(rate(alloydb_omni_database_postgresql_chill_cache_get_entry_calls_total{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}[5m]), 1)",
+          "expr": "rate(alloydb_omni_database_postgresql_chill_cache_num_hits_total{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}[5m]) / rate(alloydb_omni_database_postgresql_chill_cache_get_entry_calls_total{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}[5m])",
           "legendFormat": "{{dbnode}}",
           "range": true,
           "refId": "A"
