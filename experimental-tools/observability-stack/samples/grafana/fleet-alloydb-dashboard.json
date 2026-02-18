@@ -169,7 +169,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 *\nsum by (dbcluster) (\n  alloydb_omni_memory_used_byte{\n    dbnamespace=\"$namespace\",\n    dbcluster=~\"$dbcluster\",\n    dbnode=~\"$dbnode\"\n  }\n)\n/\nsum by (dbcluster) (\n  alloydb_omni_memory_limit_byte{\n    dbnamespace=\"$namespace\",\n    dbcluster=~\"$dbcluster\",\n    dbnode=~\"$dbnode\"\n  }\n)",
+          "expr": "100 *sum by (dbcluster) (alloydb_omni_memory_used_byte{dbnamespace=\"$namespace\", dbcluster=~\"$dbcluster\", dbnode=~\"$dbnode\" })/sum by (dbcluster) ( alloydb_omni_memory_limit_byte{    dbnamespace=\"$namespace\",   dbcluster=~\"$dbcluster\",   dbnode=~\"$dbnode\"  })",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
