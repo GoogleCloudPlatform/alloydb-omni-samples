@@ -134,11 +134,13 @@ opentelemetry-collector:
    presets:
      logsCollection:
        enabled: true
+   image:
+    repository: otel/opentelemetry-collector-k8s
    config:
     exporters:
       otlphttp/loki:
         # We need to replace this endpoint when we install Loki
-        endpoint: http://<LOKI-SVC>:3100/otlp 
+        endpoint: http://alloydb-observability-loki:3100/otlp 
         tls:
           insecure: true
     service:
@@ -148,8 +150,11 @@ opentelemetry-collector:
 
 loki:
   enabled: true
+  #for testing install, change later
+  #seTestSchema: true
   loki:
     auth_enabled: false
+    useTestSchema: true
   minio:
     enabled: true
 
