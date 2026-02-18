@@ -1,0 +1,8 @@
+#Copied and pasted from config map need to update
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: conf
+data:
+{{ (.Files.Glob "foo/*").AsConfig | indent 2 }}
