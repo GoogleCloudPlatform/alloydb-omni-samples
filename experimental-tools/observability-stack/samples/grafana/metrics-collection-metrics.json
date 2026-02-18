@@ -206,7 +206,7 @@
           },
           "editorMode": "code",
           "expr": "alloydb_omni_monitor_collect_ms{namespace=\"$namespace\", dbcluster=\"$dbcluster\"}",
-          "legendFormat": "__auto",
+          "legendFormat": "{{dbnode}}",
           "range": true,
           "refId": "A"
         }
