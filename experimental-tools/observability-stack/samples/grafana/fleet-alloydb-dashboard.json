@@ -496,7 +496,7 @@
             "my-cluster-2"
           ]
         },
-        "definition": "label_values(alloydb_omni_node_cpu_mcpu{dbnamespace=\"$namespace\"},dbcluster)",
+        "definition": "label_values(alloydb_omni_node_storage_limit_per_disk_byte{dbnamespace=\"$namespace\"},dbcluster)",
         "includeAll": true,
         "label": "dbcluster",
         "multi": true,
