@@ -338,14 +338,14 @@
         {
           "editorMode": "code",
           "expr": "alloydb_omni_database_postgresql_backends{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}",
-          "legendFormat": "Connections",
+          "legendFormat": "{{dbnode}}",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
           "expr": "alloydb_omni_database_postgresql_max_connections{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}",
-          "legendFormat": "__auto",
+          "legendFormat": "{{dbnode}}",
           "range": true,
           "refId": "B"
         }
@@ -445,7 +445,7 @@
         {
           "editorMode": "code",
           "expr": "alloydb_omni_database_postgresql_vacuum_oldest_transaction_age{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}",
-          "legendFormat": "__auto",
+          "legendFormat": "{{dbnode}}",
           "range": true,
           "refId": "A"
         }
