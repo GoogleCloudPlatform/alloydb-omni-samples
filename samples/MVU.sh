@@ -136,8 +136,8 @@ fi
 
 sourceMV=$(echo "$currVersionInSpec" | cut -d'.' -f1)
 
-if [[ "$currVersionInSpec" == "$newDBVersion" ]]; then
-  echo "It already uses the version. No MVU"
+if [[ "$sourceMV" == "$targetMV" ]]; then
+  echo "It already uses the major version. No MVU"
   exit 1
 fi
 
@@ -164,12 +164,21 @@ kubectl wait --for=condition=Ready pod/"$podName" -n "$ns" --timeout=2m
 # Wait for Database to be provisioned after pod restarts
 sleep 15s
 
+# Check if the data path contains the major version
+if kubectl exec "$podName" -n "$ns" -c database -- test -d /mnt/disks/pgsql/data; then
+    dataDirWithMV=0
+    echo "pre-upgrade data folder path does not contain major version '/mnt/disks/pgsql/data'"
+else
+    dataDirWithMV=$?
+    echo "pre-upgrade data folder path contains major version '/mnt/disks/pgsql/$sourceMV/data'"
+fi
+
 echo "Alias pg$sourceMV data directory"
 # Perform database upgrade steps (PostgreSQL 15 to 16)
 kubectl exec -i "$podName" -n "$ns" -c database -- /bin/bash -c "
   supervisorctl.par stop postgres;
   mkdir -p /mnt/disks/pgsql/$sourceMV;
-  mv /mnt/disks/pgsql/data /mnt/disks/pgsql/$sourceMV/data;
+  [ $dataDirWithMV -eq 0 ] && mv /mnt/disks/pgsql/data /mnt/disks/pgsql/$sourceMV/data;
   cp -r /usr/lib/postgresql/$sourceMV/bin /mnt/disks/pgsql/$sourceMV/.;
   cp -r /usr/lib/postgresql/$sourceMV/lib /mnt/disks/pgsql/$sourceMV/.;
   cp -r /usr/share/postgresql/$sourceMV /mnt/disks/pgsql/$sourceMV/share;
@@ -190,31 +199,40 @@ secCreationTimestamp=$(kubectl get pods -n "$ns" "$podName" -o jsonpath='{.metad
 
 echo "Update database version to $newDBVersion and recommended CPA version to $newCPAVersion"
 # Patch DBCluster to upgrade databaseVersion
-kubectl patch dbclusters.alloydbomni.dbadmin.goog "$dbcName" -n "$ns" --type=merge -p '{"spec":{"databaseVersion":"'$newDBVersion'","controlPlaneAgentsVersion": "'$newCPAVersion'"}}'
+kubectl patch dbclusters.alloydbomni.dbadmin.goog "$dbcName" -n "$ns" --type=merge -p '{"spec":{"databaseVersion":"'$newDBVersion'","controlPlaneAgentsVersion": "'$newCPAVersion'","databaseImageOSType":"UBI9"}}'
 
 waitForPodRestart "$secCreationTimestamp"
 
 # Wait for current version getting updated
 kubectl wait --for=jsonpath='{.status.primary.currentDatabaseVersion}'="'$newDBVersion'" dbcluster/"$dbcName" -n "$ns" --timeout=1800s
 
+# Check again if the data path contains the major version post upgrade
+if kubectl exec "$podName" -n "$ns" -c database -- test -d /mnt/disks/pgsql/data; then
+    postUpgradeDataDir="/mnt/disks/pgsql/data"
+else
+    postUpgradeDataDir="/mnt/disks/pgsql/$targetMV/data"
+fi
+
+echo "post-upgrade data folder path is '$postUpgradeDataDir'"
+
 # Perform post-upgrade steps
 kubectl exec -i "$podName" -n "$ns" -c database -- /bin/bash -c "
   supervisorctl.par stop postgres;
-  rm -fr /mnt/disks/pgsql/data;
-  initdb -D /mnt/disks/pgsql/data -U alloydbadmin --data-checksums --encoding=UTF8 --locale=C --locale-provider=icu --icu-locale=und-x-icu --auth-host=trust --auth-local=reject;
+  rm -fr $postUpgradeDataDir;
+  initdb -D $postUpgradeDataDir -U alloydbadmin --data-checksums --encoding=UTF8 --locale=C --locale-provider=icu --icu-locale=und-x-icu --auth-host=trust --auth-local=reject;
   cd /mnt/disks/pgsql;
   cp /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf.bak;
   echo \"local   all     all             trust\" >> /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf;
   echo \"host    all     all     127.0.0.1/32      trust\" >> /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf;
-  rm /mnt/disks/pgsql/data/pg_hba.conf;
-  echo \"local   all     all             trust\" >> /mnt/disks/pgsql/data/pg_hba.conf;
-  echo \"host    all     all     127.0.0.1/32      trust\" >> /mnt/disks/pgsql/data/pg_hba.conf;
+  rm $postUpgradeDataDir/pg_hba.conf;
+  echo \"local   all     all             trust\" >> $postUpgradeDataDir/pg_hba.conf;
+  echo \"host    all     all     127.0.0.1/32      trust\" >> $postUpgradeDataDir/pg_hba.conf;
   chmod 2740 /mnt/disks/pgsql/$sourceMV/data;
-  pg_upgrade -U alloydbadmin -b /mnt/disks/pgsql/$sourceMV/bin -B /usr/lib/postgresql/$targetMV/bin -d /mnt/disks/pgsql/$sourceMV/data -D /mnt/disks/pgsql/data --link -v;
-  cp /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf.bak /mnt/disks/pgsql/data/pg_hba.conf;
-  cp -r /mnt/disks/pgsql/$sourceMV/data/postgresql.conf /mnt/disks/pgsql/data/.;
-  cp -r /mnt/disks/pgsql/$sourceMV/data/postgresql.conf.d /mnt/disks/pgsql/data/.;
-  cp -r /mnt/disks/pgsql/$sourceMV/data/parambackup /mnt/disks/pgsql/data/.;
+  pg_upgrade -U alloydbadmin -b /mnt/disks/pgsql/$sourceMV/bin -B /usr/lib/postgresql/$targetMV/bin -d /mnt/disks/pgsql/$sourceMV/data -D $postUpgradeDataDir --link -v;
+  cp /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf.bak $postUpgradeDataDir/pg_hba.conf;
+  cp -r /mnt/disks/pgsql/$sourceMV/data/postgresql.conf $postUpgradeDataDir/.;
+  cp -r /mnt/disks/pgsql/$sourceMV/data/postgresql.conf.d $postUpgradeDataDir/.;
+  cp -r /mnt/disks/pgsql/$sourceMV/data/parambackup $postUpgradeDataDir/.;
   supervisorctl.par start postgres;
   rm -fr /mnt/disks/pgsql/$sourceMV/;
 "
@@ -235,3 +253,4 @@ while ready=$(kubectl get dbclusters.alloydbomni.dbadmin.goog "$dbcName" -n "$ns
 done
 
 echo "MVU is done"
+
