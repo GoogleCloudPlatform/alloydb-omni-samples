@@ -338,7 +338,7 @@
         {
           "editorMode": "code",
           "expr": "alloydb_omni_database_postgresql_backends{dbnamespace=\"$namespace\", dbcluster=\"$dbcluster\"}",
-          "legendFormat": "__auto",
+          "legendFormat": "Connections",
           "range": true,
           "refId": "A"
         },
