@@ -1,0 +1,126 @@
+replicaCount: 1
+
+image:
+  repository: nginx
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+
+resources: {}
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+volumes: []
+
+
+volumeMounts: []
+
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+kpsNamespace: monitoring
+
+alloydb:
+  namespace: alloydb-omni-system
+  appLabel: alloydb-omni
+  metricsPort: 9187
+  interval: 25s
+
+kube-prometheus-stack:
+  global:
+    rbac:
+      create: true
+
+  prometheus:
+    prometheusSpec:
+      serviceMonitorSelectorNilUsesHelmValues: false
+
+  grafana:
+    enabled: true
+    adminPassword: admin
+
+opentelemetry-collector:
+  enabled: true
+  mode: daemonset
+  presets:
+    logsCollection:
+      enabled: true
+  image:
+    repository: otel/opentelemetry-collector-k8s
+  config:
+    exporters:
+      otlphttp/loki:
+        endpoint: http://{{ .Release.Name }}-loki:3100/otlp
+        tls:
+          insecure: true
+    service:
+      pipelines:
+        logs:
+          exporters: [otlphttp/loki]
+
+loki:
+  enabled: true
+  loki:
+    auth_enabled: false
+    useTestSchema: true
+  minio:
+    enabled: true
+
+alerting:
+  enabled: false
+  email:
+    enabled: false
+
+minio:
+  enabled: false
+
+
+

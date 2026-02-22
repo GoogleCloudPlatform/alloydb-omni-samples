@@ -1,0 +1,18 @@
+apiVersion: v2
+name: alloydb-observability
+description: A Helm chart for Kubernetes
+
+type: application
+version: 0.1.0
+
+appVersion: "1.16.0"
+dependencies:
+  - name: kube-prometheus-stack
+    version: 65.0.0        
+    repository: https://prometheus-community.github.io/helm-charts
+  - name: opentelemetry-collector
+    version: 0.110.0          
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+  - name: loki
+    version: 6.3.0
+    repository: https://grafana.github.io/helm-charts
