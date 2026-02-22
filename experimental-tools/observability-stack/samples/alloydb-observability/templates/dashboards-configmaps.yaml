@@ -1,0 +1,21 @@
+{{/*
+  Generating a ConfigMap for each of the dashboard in files/dashboards/
+*/}}
+{{- $root := . }}
+{{- range $path, $_ := .Files.Glob "files/dashboards/*.json" }}
+{{- $name := $path | base | trimSuffix ".json" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "alloydb-observability.fullname" $root }}-dashboard-{{ $name }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "alloydb-observability.labels" $root | nindent 4 }}
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: "AlloyDB Omni"
+data:
+  {{ $name }}.json: |-
+{{ $root.Files.Get $path | indent 4 }}
+{{- end }}

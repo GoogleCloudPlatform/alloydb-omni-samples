@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "alloydb-observability.fullname" . }}-alloydb-omni
+  namespace: {{ .Values.alloydb.namespace }}
+  labels:
+    {{- include "alloydb-observability.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.alloydb.appLabel | quote }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.alloydb.namespace }}
+  endpoints:
+    - port: {{ .Values.alloydb.metricsPort | quote }}
+      interval: {{ .Values.alloydb.interval | quote }}
