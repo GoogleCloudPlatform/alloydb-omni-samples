@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pgrr"
+version = "0.1.0"
+description = "A powerful CLI tool"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Codebase", email = "codebase@berkeley.edu"}
+]
+dependencies = [
+    "click>=8.0.0",
+]
+
+[project.scripts]
+pgrr = "pgrr.cli:cli"
+
+[tool.setuptools]
+packages = ["pgrr", "pgrr.commands"]
