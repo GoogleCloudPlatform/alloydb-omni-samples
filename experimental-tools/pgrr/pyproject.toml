@@ -5,13 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pgrr"
 version = "0.1.0"
-description = "A powerful CLI tool"
+description = "Postgres Record & Replay (PGRR)"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "MIT"}
-authors = [
-    {name = "Codebase", email = "codebase@berkeley.edu"}
-]
 dependencies = [
     "click>=8.0.0",
 ]
