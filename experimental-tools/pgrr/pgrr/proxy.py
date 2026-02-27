@@ -192,9 +192,22 @@ async def handle_socket(client_reader: StreamReader, client_writer: StreamWriter
             pass
 
 
-async def listen(port: int):
+async def listen(
+    port: int,
+    upstream_host: str = REAL_PG_HOST,
+    upstream_port: int = REAL_PG_PORT,
+):
+    global REAL_PG_HOST, REAL_PG_PORT
+
+    REAL_PG_HOST = upstream_host
+    REAL_PG_PORT = upstream_port
+
+    DB_META["db_host"] = upstream_host
+    DB_META["db_port"] = upstream_port
+
     server = await asyncio.start_server(handle_socket, "0.0.0.0", port)
     print(f"Transparent PG proxy listening on 0.0.0.0:{port}")
+    print(f"Forwarding to upstream: {REAL_PG_HOST}:{REAL_PG_PORT}")
     print(f"Capture file: {CAPTURE_FILE}")
     print("Capture time: per-record (capture_time field)")
     async with server:
