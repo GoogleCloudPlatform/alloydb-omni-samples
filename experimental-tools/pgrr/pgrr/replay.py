@@ -80,7 +80,6 @@ def load_sessions(path: str) -> Dict[int, List[Dict]]:
     return sessions
 
 
-
 async def read_server_message(reader: asyncio.StreamReader) -> Tuple[bytes, bytes]:
     """
     Read one Postgres protocol message from server:
