@@ -3,10 +3,10 @@ import csv
 from asyncio.streams import StreamReader, StreamWriter
 from datetime import datetime
 import json
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
 
 REAL_PG_HOST = "127.0.0.1"
-REAL_PG_PORT = 5432   # Your actual Postgres server
+REAL_PG_PORT = 5432
 
 CAPTURE_FILE = "queries.json"
 
@@ -21,13 +21,8 @@ DB_META = {
 TOTAL_RECORDS = 0
 SKIPPED_RECORDS = 0
 
-
-def save_query_csv(query: str):
-    """Append query to CSV with timestamp"""
-    with open("queries.csv", "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([datetime.now().isoformat(), query])
-
+# Maximum message size to prevent memory exhaustion (16MB)
+MAX_MESSAGE_SIZE = 16 * 1024 * 1024
 
 def save_query_json(record: dict, filename=CAPTURE_FILE):
     """Append a JSON record to a file (newline-delimited JSON format)."""
@@ -67,41 +62,69 @@ def try_parse_startup_params(chunk: bytes) -> Optional[Dict[str, str]]:
     return params
 
 
-def make_in_memory_record(data: bytes):
+def is_ssl_request(payload: bytes) -> bool:
+    """Check if payload is a Postgres SSLRequest (length=8, magic=0x04D2162F)."""
+    return len(payload) == 8 and payload[4:8] == bytes.fromhex("04d2162f")
+
+
+def is_startup_packet(payload: bytes) -> bool:
+    """Check if payload is a Postgres StartupPacket (protocol version 0x00030000)."""
+    return len(payload) >= 8 and payload[4:8] == bytes.fromhex("00030000")
+
+
+def make_in_memory_record(data: bytes, is_client_to_server: bool = False):
     """
     Build your record structure from a raw chunk.
     (No timestamp here — capture_time is added later.)
+    
+    For client->server messages during startup phase (untyped):
+    - SSLRequest: 8 bytes, magic 0x04D2162F
+    - StartupPacket: length + proto_version 0x00030000 + params
+    
+    For typed messages:
+    - First byte is the message type
     """
     msg_type = None
     sql = None
     description = None
 
     if len(data) > 0:
-        msg_type = data[0:1].decode("ascii", errors="replace")
+        # For client->server messages, check for special startup-phase messages first
+        if is_client_to_server:
+            if is_ssl_request(data):
+                msg_type = "SSLRequest"
+                description = "SSL Request"
+            elif is_startup_packet(data):
+                msg_type = "StartupPacket"
+                description = "Startup Packet"
+        
+        # If not a special message, get type from first byte (for typed messages)
+        if msg_type is None and len(data) > 0:
+            msg_type = data[0:1].decode("ascii", errors="replace")
 
-        if msg_type == "Q" and len(data) > 5:
-            sql_bytes = data[5:]
-            sql = sql_bytes.split(b"\x00")[0].decode("utf-8", errors="replace")
+            if msg_type == "Q" and len(data) > 5:
+                sql_bytes = data[5:]
+                sql = sql_bytes.split(b"\x00")[0].decode("utf-8", errors="replace")
 
-        message_descriptions = {
-            "Q": "Simple Query",
-            "R": "AuthenticationRequest",
-            "S": "ParameterStatus",
-            "K": "BackendKeyData",
-            "Z": "ReadyForQuery",
-            "T": "RowDescription",
-            "D": "DataRow",
-            "C": "CommandComplete",
-            "E": "ErrorResponse",
-            "N": "NoticeResponse",
-            "1": "ParseComplete",
-            "2": "BindComplete",
-            "3": "CloseComplete",
-            "X": "Terminate",
-        }
+            message_descriptions = {
+                "Q": "Simple Query",
+                "R": "AuthenticationRequest",
+                "S": "ParameterStatus",
+                "K": "BackendKeyData",
+                "Z": "ReadyForQuery",
+                "T": "RowDescription",
+                "D": "DataRow",
+                "C": "CommandComplete",
+                "E": "ErrorResponse",
+                "N": "NoticeResponse",
+                "1": "ParseComplete",
+                "2": "BindComplete",
+                "3": "CloseComplete",
+                "X": "Terminate",
+            }
 
-        if msg_type in message_descriptions:
-            description = message_descriptions[msg_type]
+            if msg_type in message_descriptions:
+                description = message_descriptions[msg_type]
 
     return {
         "msg_type": msg_type,
@@ -120,40 +143,173 @@ def add_meta_fields(record: dict) -> dict:
     return record
 
 
+class ClientFramer:
+    """
+    Frames client→server Postgres messages.
+    Handles startup-phase (untyped) and normal (typed) messages.
+    """
+    def __init__(self):
+        self.buffer = bytearray()
+        self.state = "startup"  # "startup" or "typed"
+    
+    def feed(self, data: bytes) -> List[bytes]:
+        """
+        Add data to buffer and extract complete messages.
+        Returns list of complete message bytes.
+        """
+        self.buffer.extend(data)
+        messages = []
+        
+        while True:
+            if self.state == "startup":
+                # Startup-phase: length(4) + body
+                if len(self.buffer) < 4:
+                    break
+                
+                length = int.from_bytes(self.buffer[0:4], "big")
+                
+                # Sanity check
+                if length < 4 or length > MAX_MESSAGE_SIZE:
+                    # Invalid length, skip this byte and try to resync
+                    self.buffer.pop(0)
+                    continue
+                
+                if len(self.buffer) < length:
+                    break
+                
+                msg = bytes(self.buffer[:length])
+                del self.buffer[:length]
+                messages.append(msg)
+                
+                # Check if this is a StartupPacket (protocol version 0x00030000)
+                if len(msg) >= 8 and msg[4:8] == bytes.fromhex("00030000"):
+                    self.state = "typed"
+            
+            elif self.state == "typed":
+                # Normal messages: type(1) + length(4) + payload
+                if len(self.buffer) < 5:
+                    break
+                
+                length = int.from_bytes(self.buffer[1:5], "big")
+                total_size = 1 + length
+                
+                # Sanity check
+                if length < 4 or total_size > MAX_MESSAGE_SIZE:
+                    # Invalid length, skip this byte and try to resync
+                    self.buffer.pop(0)
+                    continue
+                
+                if len(self.buffer) < total_size:
+                    break
+                
+                msg = bytes(self.buffer[:total_size])
+                del self.buffer[:total_size]
+                messages.append(msg)
+        
+        return messages
+    
+    def has_partial(self) -> bool:
+        """Returns True if buffer has leftover partial data."""
+        return len(self.buffer) > 0
+
+
+class ServerFramer:
+    """
+    Frames server→client Postgres messages.
+    Always uses typed framing: type(1) + length(4) + payload.
+    """
+    def __init__(self):
+        self.buffer = bytearray()
+    
+    def feed(self, data: bytes) -> List[bytes]:
+        """
+        Add data to buffer and extract complete messages.
+        Returns list of complete message bytes.
+        """
+        self.buffer.extend(data)
+        messages = []
+        
+        while True:
+            if len(self.buffer) < 5:
+                break
+            
+            length = int.from_bytes(self.buffer[1:5], "big")
+            total_size = 1 + length
+            
+            # Sanity check
+            if length < 4 or total_size > MAX_MESSAGE_SIZE:
+                # Invalid length, skip this byte and try to resync
+                self.buffer.pop(0)
+                continue
+            
+            if len(self.buffer) < total_size:
+                break
+            
+            msg = bytes(self.buffer[:total_size])
+            del self.buffer[:total_size]
+            messages.append(msg)
+        
+        return messages
+    
+    def has_partial(self) -> bool:
+        """Returns True if buffer has leftover partial data."""
+        return len(self.buffer) > 0
+
+
 async def forward(src: StreamReader, dst: StreamWriter, direction: str):
     """
-    Forward data from src -> dst while logging the bytes.
+    Forward data from src -> dst while logging individual messages.
+    Uses proper Postgres wire protocol framing.
     """
     global TOTAL_RECORDS, SKIPPED_RECORDS
 
+    # Determine framer type based on direction
+    is_client_to_server = "client \u2192 server" in direction
+    framer = ClientFramer() if is_client_to_server else ServerFramer()
+
     try:
         while True:
+            # Read a chunk of bytes (may contain multiple messages or partial messages)
             data = await src.read(4096)
             if not data:
                 print(f"[{direction}] connection closed")
+                
+                # Check for leftover partial data
+                if framer.has_partial():
+                    SKIPPED_RECORDS += 1
+                    print(f"[{direction}] warning: {len(framer.buffer)} bytes of partial data discarded")
                 break
 
-            params = try_parse_startup_params(data)
-            if params:
-                if DB_META["db_user"] is None and params.get("user"):
-                    DB_META["db_user"] = params.get("user")
-                if DB_META["db_name"] is None and params.get("database"):
-                    DB_META["db_name"] = params.get("database")
+            # Feed data to framer and extract complete messages
+            messages = framer.feed(data)
+            
+            # Process each complete message
+            for msg_bytes in messages:
+                # Try to parse startup parameters (only relevant for client->server)
+                if is_client_to_server:
+                    params = try_parse_startup_params(msg_bytes)
+                    if params:
+                        if DB_META["db_user"] is None and params.get("user"):
+                            DB_META["db_user"] = params.get("user")
+                        if DB_META["db_name"] is None and params.get("database"):
+                            DB_META["db_name"] = params.get("database")
 
-            record = make_in_memory_record(data)
-            record["direction"] = direction
+                # Build record for this message (pass is_client_to_server for proper type detection)
+                record = make_in_memory_record(msg_bytes, is_client_to_server=is_client_to_server)
+                record["direction"] = direction
+                record = add_meta_fields(record)
 
-            record = add_meta_fields(record)
+                # Save to capture file
+                try:
+                    save_query_json(record)
+                    TOTAL_RECORDS += 1
+                except Exception as e:
+                    SKIPPED_RECORDS += 1
+                    print(f"[{direction}] failed to write record: {e}")
 
-            try:
-                save_query_json(record)
-                TOTAL_RECORDS += 1
-            except Exception as e:
-                SKIPPED_RECORDS += 1
-                print(f"[{direction}] failed to write record: {e}")
-
-            dst.write(data)
-            await dst.drain()
+                # Forward message to destination
+                dst.write(msg_bytes)
+                await dst.drain()
 
     except Exception as e:
         print(f"[{direction}] error: {e}")
@@ -167,13 +323,16 @@ async def forward(src: StreamReader, dst: StreamWriter, direction: str):
 
 
 async def handle_socket(client_reader: StreamReader, client_writer: StreamWriter):
+    """
+    Handle one client connection, forwarding to the configured upstream.
+    """
     addr = client_writer.get_extra_info("peername")
     print(f"\n=== New client connection from {addr} ===")
 
     try:
         print("Connecting to real Postgres server...")
-        server_reader, server_writer = await asyncio.open_connection(REAL_PG_HOST, REAL_PG_PORT)
-        print("Connected to real Postgres.")
+        server_reader, server_writer = await asyncio.open_connection(DB_META["db_host"], DB_META["db_port"])
+        print(f"Connected to real Postgres at {DB_META['db_host']}:{DB_META['db_port']}.")
 
         client_to_server = forward(client_reader, server_writer, f"{addr} client \u2192 server")
         server_to_client = forward(server_reader, client_writer, f"{addr} server \u2192 client")
@@ -192,22 +351,17 @@ async def handle_socket(client_reader: StreamReader, client_writer: StreamWriter
             pass
 
 
-async def listen(
-    port: int,
-    upstream_host: str = REAL_PG_HOST,
-    upstream_port: int = REAL_PG_PORT,
-):
-    global REAL_PG_HOST, REAL_PG_PORT
+async def listen(port: int, real_host: str = REAL_PG_HOST, real_port: int = REAL_PG_PORT):
+    # Update DB meta to reflect the chosen upstream.
+    DB_META["db_host"] = real_host
+    DB_META["db_port"] = real_port
 
-    REAL_PG_HOST = upstream_host
-    REAL_PG_PORT = upstream_port
+    async def handler(client_reader: StreamReader, client_writer: StreamWriter):
+        await handle_socket(client_reader, client_writer)
 
-    DB_META["db_host"] = upstream_host
-    DB_META["db_port"] = upstream_port
-
-    server = await asyncio.start_server(handle_socket, "0.0.0.0", port)
+    server = await asyncio.start_server(handler, "0.0.0.0", port)
     print(f"Transparent PG proxy listening on 0.0.0.0:{port}")
-    print(f"Forwarding to upstream: {REAL_PG_HOST}:{REAL_PG_PORT}")
+    print(f"Upstream Postgres: {real_host}:{real_port}")
     print(f"Capture file: {CAPTURE_FILE}")
     print("Capture time: per-record (capture_time field)")
     async with server:

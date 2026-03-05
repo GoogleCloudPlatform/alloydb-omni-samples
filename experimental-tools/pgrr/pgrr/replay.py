@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import argparse
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -60,9 +61,13 @@ def load_sessions(path: str) -> Dict[int, List[Dict]]:
                 continue
 
             # direction looks like: "('127.0.0.1', 65098) client → server"
+            # Extract port using regex for robustness
+            match = re.search(r",\s*(\d+)\)", direction)
+            if not match:
+                print(f"[load] skipping line {line_no}: couldn't parse client port in direction={direction!r}")
+                continue
             try:
-                inside = direction.split("(", 1)[1].split(")", 1)[0]
-                port = int(inside.split(",")[1].strip())
+                port = int(match.group(1))
             except Exception:
                 print(f"[load] skipping line {line_no}: couldn't parse client port in direction={direction!r}")
                 continue
@@ -74,15 +79,6 @@ def load_sessions(path: str) -> Dict[int, List[Dict]]:
 
     return sessions
 
-
-def is_ssl_request(payload: bytes) -> bool:
-    # SSLRequest = length(8) + magic(0x04D2162F)
-    return len(payload) == 8 and payload[4:] == bytes.fromhex("04d2162f")
-
-
-def is_startup_packet(payload: bytes) -> bool:
-    # Startup has protocol version 0x00030000 at bytes [4:8]
-    return len(payload) >= 8 and payload[4:8] == bytes.fromhex("00030000")
 
 
 async def read_server_message(reader: asyncio.StreamReader) -> Tuple[bytes, bytes]:
@@ -194,14 +190,14 @@ async def replay_session(
 
             # --- protocol sync ---
             # After SSLRequest, server responds with 1 byte: b'S' or b'N'
-            if mt == "\u0000" and is_ssl_request(payload):
+            if mt == "SSLRequest":
                 try:
                     await reader.readexactly(1)
                 except Exception:
                     pass
 
             # After StartupPacket, wait until ReadyForQuery
-            if mt == "\u0000" and is_startup_packet(payload):
+            if mt == "StartupPacket":
                 try:
                     await read_until_ready(reader)
                 except Exception as e:
