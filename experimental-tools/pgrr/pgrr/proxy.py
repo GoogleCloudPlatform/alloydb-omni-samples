@@ -116,7 +116,7 @@ def make_in_memory_record(data: bytes, is_client_to_server: bool = False):
                 "D": "DataRow",
                 "C": "CommandComplete",
                 "E": "ErrorResponse",
-                "N": "NoticeResponse",
+                "N": "NoticeResponse" if len(data) > 1 else "SSLNotSupported",
                 "1": "ParseComplete",
                 "2": "BindComplete",
                 "3": "CloseComplete",
@@ -216,11 +216,29 @@ class ClientFramer:
 class ServerFramer:
     """
     Frames server→client Postgres messages.
-    Always uses typed framing: type(1) + length(4) + payload.
+
+    If the client sent an SSLRequest, the server's very first response is a
+    single raw byte:
+      - b'N' (0x4E): SSL not supported
+      - b'S' (0x53): SSL supported
+    All subsequent messages (and all messages when no SSLRequest was sent) use
+    typed framing: type(1) + length(4) + payload.
+
+    Pass ssl_requested=True when the client sent an SSLRequest so the framer
+    knows to expect the 1-byte SSL response first.
     """
-    def __init__(self):
+    _SSL_RESPONSE_BYTES = {0x4E, 0x53}  # b'N', b'S'
+
+    def __init__(self, ssl_requested: bool = False):
         self.buffer = bytearray()
-    
+        # Only enter ssl_response state if the client actually sent SSLRequest
+        self.state = "ssl_response" if ssl_requested else "typed"
+
+    def notify_ssl_request(self):
+        """Call this when we see the client sent an SSLRequest."""
+        if self.state == "typed" and len(self.buffer) == 0:
+            self.state = "ssl_response"
+
     def feed(self, data: bytes) -> List[bytes]:
         """
         Add data to buffer and extract complete messages.
@@ -228,44 +246,66 @@ class ServerFramer:
         """
         self.buffer.extend(data)
         messages = []
-        
+
         while True:
-            if len(self.buffer) < 5:
-                break
-            
-            length = int.from_bytes(self.buffer[1:5], "big")
-            total_size = 1 + length
-            
-            # Sanity check
-            if length < 4 or total_size > MAX_MESSAGE_SIZE:
-                # Invalid length, skip this byte and try to resync
-                self.buffer.pop(0)
-                continue
-            
-            if len(self.buffer) < total_size:
-                break
-            
-            msg = bytes(self.buffer[:total_size])
-            del self.buffer[:total_size]
-            messages.append(msg)
-        
+            if self.state == "ssl_response":
+                # Server responds to SSLRequest with exactly 1 raw byte (N or S).
+                if len(self.buffer) < 1:
+                    break
+                first = self.buffer[0]
+                if first in self._SSL_RESPONSE_BYTES:
+                    msg = bytes(self.buffer[:1])
+                    del self.buffer[:1]
+                    messages.append(msg)
+                # Switch to typed framing regardless (even if not N/S)
+                self.state = "typed"
+
+            elif self.state == "typed":
+                if len(self.buffer) < 5:
+                    break
+
+                length = int.from_bytes(self.buffer[1:5], "big")
+                total_size = 1 + length
+
+                # Sanity check
+                if length < 4 or total_size > MAX_MESSAGE_SIZE:
+                    self.buffer.pop(0)
+                    continue
+
+                if len(self.buffer) < total_size:
+                    break
+
+                msg = bytes(self.buffer[:total_size])
+                del self.buffer[:total_size]
+                messages.append(msg)
+
         return messages
-    
+
     def has_partial(self) -> bool:
         """Returns True if buffer has leftover partial data."""
         return len(self.buffer) > 0
 
 
-async def forward(src: StreamReader, dst: StreamWriter, direction: str):
+async def forward(src: StreamReader, dst: StreamWriter, direction: str,
+                  server_framer: "ServerFramer | None" = None):
     """
     Forward data from src -> dst while logging individual messages.
     Uses proper Postgres wire protocol framing.
+
+    server_framer: when forwarding client→server, pass the ServerFramer for the
+    paired server→client direction so we can notify it when an SSLRequest is seen.
     """
     global TOTAL_RECORDS, SKIPPED_RECORDS
 
-    # Determine framer type based on direction
+    # Determine framer type based on direction.
+    # For server→client, use the shared framer (passed as server_framer) so the
+    # client→server coroutine can call notify_ssl_request() on it.
     is_client_to_server = "client \u2192 server" in direction
-    framer = ClientFramer() if is_client_to_server else ServerFramer()
+    if is_client_to_server:
+        framer = ClientFramer()
+    else:
+        # server_framer is the shared ServerFramer instance created in handle_socket
+        framer = server_framer if server_framer is not None else ServerFramer()
 
     try:
         while True:
@@ -273,7 +313,7 @@ async def forward(src: StreamReader, dst: StreamWriter, direction: str):
             data = await src.read(4096)
             if not data:
                 print(f"[{direction}] connection closed")
-                
+
                 # Check for leftover partial data
                 if framer.has_partial():
                     SKIPPED_RECORDS += 1
@@ -282,7 +322,7 @@ async def forward(src: StreamReader, dst: StreamWriter, direction: str):
 
             # Feed data to framer and extract complete messages
             messages = framer.feed(data)
-            
+
             # Process each complete message
             for msg_bytes in messages:
                 # Try to parse startup parameters (only relevant for client->server)
@@ -294,7 +334,12 @@ async def forward(src: StreamReader, dst: StreamWriter, direction: str):
                         if DB_META["db_name"] is None and params.get("database"):
                             DB_META["db_name"] = params.get("database")
 
-                # Build record for this message (pass is_client_to_server for proper type detection)
+                    # If client sent SSLRequest, tell the server framer to expect
+                    # the 1-byte SSL response before switching to typed framing.
+                    if server_framer is not None and is_ssl_request(msg_bytes):
+                        server_framer.notify_ssl_request()
+
+                # Build record for this message
                 record = make_in_memory_record(msg_bytes, is_client_to_server=is_client_to_server)
                 record["direction"] = direction
                 record = add_meta_fields(record)
@@ -307,8 +352,11 @@ async def forward(src: StreamReader, dst: StreamWriter, direction: str):
                     SKIPPED_RECORDS += 1
                     print(f"[{direction}] failed to write record: {e}")
 
-                # Forward message to destination
+                # Buffer the write — forward all messages, drain once per chunk
                 dst.write(msg_bytes)
+
+            # Single drain per read() chunk instead of per-message
+            if messages:
                 await dst.drain()
 
     except Exception as e:
@@ -334,8 +382,13 @@ async def handle_socket(client_reader: StreamReader, client_writer: StreamWriter
         server_reader, server_writer = await asyncio.open_connection(DB_META["db_host"], DB_META["db_port"])
         print(f"Connected to real Postgres at {DB_META['db_host']}:{DB_META['db_port']}.")
 
-        client_to_server = forward(client_reader, server_writer, f"{addr} client \u2192 server")
-        server_to_client = forward(server_reader, client_writer, f"{addr} server \u2192 client")
+        # Create the server framer upfront so the client forwarder can notify it
+        # when it sees an SSLRequest, enabling correct 1-byte SSL response handling.
+        srv_framer = ServerFramer()
+        client_to_server = forward(client_reader, server_writer, f"{addr} client \u2192 server",
+                                   server_framer=srv_framer)
+        server_to_client = forward(server_reader, client_writer, f"{addr} server \u2192 client",
+                                   server_framer=srv_framer)
 
         await asyncio.gather(client_to_server, server_to_client)
 
