@@ -206,7 +206,10 @@ async def replay_session(
             # After each Simple Query, wait until ReadyForQuery
             if mt == "Q":
                 try:
-                    await read_until_ready(reader)
+                    await asyncio.wait_for(read_until_ready(reader), timeout=5.0)
+                except asyncio.TimeoutError:
+                    print(f"[replay] session={session_port}: timeout waiting for ReadyForQuery after Q")
+                    break
                 except Exception as e:
                     print(f"[replay] session={session_port}: failed waiting for ReadyForQuery: {e}")
                     break
