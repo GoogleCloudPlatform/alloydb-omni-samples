@@ -236,3 +236,75 @@ pgrr patch-capture CAPTURE_FILE [OPTIONS]
 - **SSL**: `pgrr` handles the SSL negotiation transparently. You do not need to set `PGSSLMODE=disable`.
 - **Multiple sessions**: if multiple clients connected during capture, each session is replayed concurrently on its own connection.
 - **Capture file format**: newline-delimited JSON (one record per line). Each record includes `msg_type`, `sql` (for `Q` messages), `raw_hex`, `direction`, `capture_time`, `db_user`, and `db_name`.
+
+
+
+
+**Simple test** 
+---
+
+**pgrr + pgbench End-to-End Walkthrough**
+
+**Prerequisites**
+```
+cd experimental-tools/pgrr
+pip install -e .
+```
+
+**1. Clean up any previous runs**
+```
+kill $(lsof -i :5433 -t) 2>/dev/null
+rm -f queries.json replay_log.jsonl
+```
+
+**2. Create source and target databases**
+```
+dropdb -h 127.0.0.1 -p 5432 -U <YOUR USER> sourcedb 2>/dev/null
+createdb -h 127.0.0.1 -p 5432 -U <YOUR USER> sourcedb
+
+dropdb -h 127.0.0.1 -p 5432 -U <YOUR USER> targetdb 2>/dev/null
+createdb -h 127.0.0.1 -p 5432 -U <YOUR USER> targetdb
+```
+
+**3. Initialize pgbench schema on source DB (direct — bypass proxy)**
+```
+pgbench -h 127.0.0.1 -p 5432 -U <YOUR USER> -i sourcedb
+```
+
+**4. Start the proxy — Terminal 1 (leave running)**
+```
+pgrr capture --port 5433 --upstream-host 127.0.0.1 --upstream-port 5432
+```
+
+**5. Run pgbench through the proxy — Terminal 2**
+```
+pgbench -h 127.0.0.1 -p 5433 -U <YOUR USER> -c 1 -t 10 sourcedb
+```
+
+**6. Stop the proxy — Terminal 1**
+```
+Ctrl+C
+```
+
+**7. Initialize pgbench schema on target DB (direct — bypass proxy)**
+```
+pgbench -h 127.0.0.1 -p 5432 -U <YOUR USER> -i targetdb
+```
+
+**8. Patch the capture file to point at targetdb**
+```
+pgrr patch-capture queries.json --user <YOUR USER> --db targetdb
+```
+
+**9. Replay into targetdb — Terminal 2**
+```
+pgrr replay --capture queries.json --host 127.0.0.1 --port 5432
+```
+
+**10. Verify the data landed**
+```
+psql -h 127.0.0.1 -p 5432 -U <YOUR USER> targetdb -c "SELECT count(*) FROM pgbench_history;"
+psql -h 127.0.0.1 -p 5432 -U <YOUR USER> sourcedb  -c "SELECT count(*) FROM pgbench_history;"
+```
+
+Both should return `10` (matching the `-t 10` transactions you ran).
