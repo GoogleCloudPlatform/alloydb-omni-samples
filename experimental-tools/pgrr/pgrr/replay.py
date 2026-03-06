@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import argparse
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -60,9 +61,13 @@ def load_sessions(path: str) -> Dict[int, List[Dict]]:
                 continue
 
             # direction looks like: "('127.0.0.1', 65098) client → server"
+            # Extract port using regex for robustness
+            match = re.search(r",\s*(\d+)\)", direction)
+            if not match:
+                print(f"[load] skipping line {line_no}: couldn't parse client port in direction={direction!r}")
+                continue
             try:
-                inside = direction.split("(", 1)[1].split(")", 1)[0]
-                port = int(inside.split(",")[1].strip())
+                port = int(match.group(1))
             except Exception:
                 print(f"[load] skipping line {line_no}: couldn't parse client port in direction={direction!r}")
                 continue
@@ -73,16 +78,6 @@ def load_sessions(path: str) -> Dict[int, List[Dict]]:
         recs.sort(key=lambda r: (r.get("capture_time") or r.get("timestamp")))
 
     return sessions
-
-
-def is_ssl_request(payload: bytes) -> bool:
-    # SSLRequest = length(8) + magic(0x04D2162F)
-    return len(payload) == 8 and payload[4:] == bytes.fromhex("04d2162f")
-
-
-def is_startup_packet(payload: bytes) -> bool:
-    # Startup has protocol version 0x00030000 at bytes [4:8]
-    return len(payload) >= 8 and payload[4:8] == bytes.fromhex("00030000")
 
 
 async def read_server_message(reader: asyncio.StreamReader) -> Tuple[bytes, bytes]:
@@ -141,8 +136,24 @@ async def replay_session(
     reader, writer = await asyncio.open_connection(host, port)
     print(f"[replay] session={session_port}: connected.")
 
+    # --- let the server perform its normal startup/auth handshake ---
+    # AlloyDB Omni uses SCRAM with a fresh nonce each connection; replaying
+    # the original startup/auth bytes will always fail.  Instead wait until
+    # the server signals ReadyForQuery on the new connection.
+    try:
+        await read_until_ready(reader)
+    except Exception as e:
+        print(f"[replay] session={session_port}: error waiting for initial ReadyForQuery: {e}")
+        # continue anyway; the main loop will terminate if the conn is unusable
+
     try:
         for rec in records:
+            mt = rec.get("msg_type")
+
+            # drop any startup / ssl / auth traffic from the capture
+            if mt in ("StartupPacket", "SSLRequest", "R"):
+                continue
+
             # Global timeline pacing (speed-adjusted)
             try:
                 t = rec_time(rec)
@@ -163,8 +174,6 @@ async def replay_session(
                 skipped += 1
                 print(f"[replay] session={session_port}: skipping bad hex ({e})")
                 continue
-
-            mt = rec.get("msg_type")
 
             # --- send ---
             try:
@@ -193,25 +202,13 @@ async def replay_session(
                 print(f"[replay] session={session_port}: failed to write replay log: {e}")
 
             # --- protocol sync ---
-            # After SSLRequest, server responds with 1 byte: b'S' or b'N'
-            if mt == "\u0000" and is_ssl_request(payload):
-                try:
-                    await reader.readexactly(1)
-                except Exception:
-                    pass
-
-            # After StartupPacket, wait until ReadyForQuery
-            if mt == "\u0000" and is_startup_packet(payload):
-                try:
-                    await read_until_ready(reader)
-                except Exception as e:
-                    print(f"[replay] session={session_port}: failed during startup/auth: {e}")
-                    break
-
             # After each Simple Query, wait until ReadyForQuery
             if mt == "Q":
                 try:
-                    await read_until_ready(reader)
+                    await asyncio.wait_for(read_until_ready(reader), timeout=5.0)
+                except asyncio.TimeoutError:
+                    print(f"[replay] session={session_port}: timeout waiting for ReadyForQuery after Q")
+                    break
                 except Exception as e:
                     print(f"[replay] session={session_port}: failed waiting for ReadyForQuery: {e}")
                     break
