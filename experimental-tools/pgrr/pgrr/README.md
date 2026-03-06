@@ -59,6 +59,8 @@ Each captured client session is replayed on its own connection with timing prese
 
 ## Notes
 
-- To run a disposable Postgres for testing: `docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine`
-- If you want to keep your real database untouched, run another Postgres on a different port (e.g., `-p 5434:5432`) and point replay at it with `--host 127.0.0.1 --port 5434`.
-- Ensure the target Postgres authentication settings accept the user/password used during capture, otherwise replay will fail during the startup/auth sequence.
+- **Authentication**: the target database must accept the user from the capture (or patched) StartupPacket. Make sure `pg_hba.conf` allows the connection, or use `trust` auth for local testing.
+- **Schema must exist**: replay sends the exact SQL that was captured. If your target DB doesn't have the same schema, DDL statements in the capture will create it — but if you're only replaying DML, create the schema first.
+- **SSL**: `pgrr` handles the SSL negotiation transparently. You do not need to set `PGSSLMODE=disable`.
+- **Multiple sessions**: if multiple clients connected during capture, each session is replayed concurrently on its own connection.
+- **Capture file format**: newline-delimited JSON (one record per line). Each record includes `msg_type`, `sql` (for `Q` messages), `raw_hex`, `direction`, `capture_time`, `db_user`, and `db_name`.
