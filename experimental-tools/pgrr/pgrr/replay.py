@@ -136,8 +136,24 @@ async def replay_session(
     reader, writer = await asyncio.open_connection(host, port)
     print(f"[replay] session={session_port}: connected.")
 
+    # --- let the server perform its normal startup/auth handshake ---
+    # AlloyDB Omni uses SCRAM with a fresh nonce each connection; replaying
+    # the original startup/auth bytes will always fail.  Instead wait until
+    # the server signals ReadyForQuery on the new connection.
+    try:
+        await read_until_ready(reader)
+    except Exception as e:
+        print(f"[replay] session={session_port}: error waiting for initial ReadyForQuery: {e}")
+        # continue anyway; the main loop will terminate if the conn is unusable
+
     try:
         for rec in records:
+            mt = rec.get("msg_type")
+
+            # drop any startup / ssl / auth traffic from the capture
+            if mt in ("StartupPacket", "SSLRequest", "R"):
+                continue
+
             # Global timeline pacing (speed-adjusted)
             try:
                 t = rec_time(rec)
@@ -158,8 +174,6 @@ async def replay_session(
                 skipped += 1
                 print(f"[replay] session={session_port}: skipping bad hex ({e})")
                 continue
-
-            mt = rec.get("msg_type")
 
             # --- send ---
             try:
@@ -188,21 +202,6 @@ async def replay_session(
                 print(f"[replay] session={session_port}: failed to write replay log: {e}")
 
             # --- protocol sync ---
-            # After SSLRequest, server responds with 1 byte: b'S' or b'N'
-            if mt == "SSLRequest":
-                try:
-                    await reader.readexactly(1)
-                except Exception:
-                    pass
-
-            # After StartupPacket, wait until ReadyForQuery
-            if mt == "StartupPacket":
-                try:
-                    await read_until_ready(reader)
-                except Exception as e:
-                    print(f"[replay] session={session_port}: failed during startup/auth: {e}")
-                    break
-
             # After each Simple Query, wait until ReadyForQuery
             if mt == "Q":
                 try:
