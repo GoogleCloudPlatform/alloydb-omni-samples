@@ -40,7 +40,7 @@ spec:
 
 ## Point-in-Time Recovery and Cloning
 
-You can clone a database cluster to a precise point in time (Point-in-Time Recovery, or PITR). The `Restore` API is also used for this operation. 
+You can clone a database cluster to a precise point in time (Point-in-Time Recovery, or PITR). The `Restore` API is also used for this operation.
 
 As shown in [`v1_clone.yaml`](../samples/v1_clone.yaml), you provide a timestamp for the `pointInTime` field and a configuration for the new cloned cluster:
 
