@@ -16,7 +16,7 @@ We have organized the examples in this repository into comprehensive functional 
 
 ## Repository Structure
 
-- `samples/`: Raw Kubernetes YAML custom resources for all the life cycle capabilities discussed in the guides. 
+- `samples/`: Raw Kubernetes YAML custom resources for all the life cycle capabilities discussed in the guides.
 - `k8s/helm/`: Helm Charts for deploying the AlloyDB Omni Operator and configurable Clusters.
 - `crd/`: The raw Custom Resource Definitions (CRDs) required by the operator.
 - `monitoring-dashboards/`: Extracted dashboard configurations for integration with observability stacks.
