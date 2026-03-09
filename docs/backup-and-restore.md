@@ -18,6 +18,9 @@ spec:
   gcsAuthType: workload-identity
 ```
 
+### External Storage (S3-Compatible)
+Alternatively, you can push backups to any S3-Compatible storage system. The [`v1_backupplan_s3.yaml`](../samples/v1_backupplan_s3.yaml) sample illustrates how to configure the `s3Options` including the bucket, endpoint, and region configurations.
+
 ## Taking Backups
 
 While a `BackupPlan` schedules automatic backups, you can also trigger them manually on-demand. Use the [`v1_backup.yaml`](../samples/v1_backup.yaml) sample to create a `Backup` custom resource:

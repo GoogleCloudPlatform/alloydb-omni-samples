@@ -4,4 +4,3 @@ metadata:
   name: switchover-sample
 spec:
   dbclusterRef: dbcluster-sample
-  newPrimary: aaaa-dbcluster-sample   # Replace with the standby instances you selected to switch with primary instance

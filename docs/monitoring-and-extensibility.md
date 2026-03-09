@@ -19,6 +19,10 @@ To use it:
 kubectl apply -f monitoring-dashboards/grafana/alloydbomni_dashboard.yaml
 ```
 
+### Operator and Database Observability
+
+In addition to Grafana dashboards, you can formally configure how logs, metrics, and traces are handled in the operator and the database instances via the `ObservabilityConfig` resource. The [`v1_observabilityconfig.yaml`](../samples/v1_observabilityconfig.yaml) sample shows how to setup logging formats, enable prometheus metrics scraping endpoints, and configure OpenTelemetry tracing export parameters for your database fleet.
+
 ## Extensibility (Webhooks)
 
 The `webhooks/` directory demonstrates how you can dynamically mutate or validate requests for database clusters using Kubernetes mutating webhooks.

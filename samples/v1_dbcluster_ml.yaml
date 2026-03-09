@@ -6,6 +6,14 @@ type: Opaque
 data:
   dbcluster-sample: "Q2hhbmdlTWUxMjM=" # Password is ChangeMe123
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vertex-ai-key-alloydb
+type: Opaque
+data:
+  private-key.json: ""
+---
 apiVersion: alloydbomni.dbadmin.goog/v1
 kind: DBCluster
 metadata:
@@ -13,6 +21,12 @@ metadata:
 spec:
   databaseVersion: "17.5.0"
   primarySpec:
+    features:
+      googleMLExtension:
+        enabled: true
+        config:
+          vertexAIKeyRef: vertex-ai-key-alloydb
+          vertexAIRegion: us-central1
     adminUser:
       passwordRef:
         name: db-pw-dbcluster-sample
@@ -22,6 +36,3 @@ spec:
       disks:
       - name: DataDisk
         size: 10Gi
-    parameters:
-      google_columnar_engine.enabled: "on"
-      google_columnar_engine.memory_size_in_mb: "256"
