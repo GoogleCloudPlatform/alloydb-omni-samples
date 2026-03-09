@@ -10,14 +10,15 @@ In the `monitoring-dashboards/grafana/` directory, you will find `alloydbomni_da
 
 The dashboard integrates with Prometheus to display:
 - Service Up/Down status
-- CPU and Memory Utilization per Node
+- CPU and Memory Utilization per AlloyDB Omni Node
 - Database Storage Volume and Usage
 - Transaction rates, cache hit ratios, and connections
 
-To use it:
-```bash
-kubectl apply -f monitoring-dashboards/grafana/alloydbomni_dashboard.yaml
-```
+To use it, head to [manage#monitor](https://docs.cloud.google.com/alloydb/omni/kubernetes/current/docs/manage#monitor). Instructions for deploying Grafana and the dashboard are in the "View metrics using Grafana"section on that page.
+
+### Operator and Database Observability
+
+In addition to Grafana dashboards, you can formally configure how logs, metrics, and traces are handled in the operator and the database instances via the `ObservabilityConfig` resource. The [`v1_observabilityconfig.yaml`](../samples/v1_observabilityconfig.yaml) sample shows how to setup logging formats, enable prometheus metrics scraping endpoints, and configure OpenTelemetry tracing export parameters for your database fleet.
 
 ### Operator and Database Observability
 
