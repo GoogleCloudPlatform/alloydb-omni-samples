@@ -5,6 +5,18 @@ metadata:
 spec:
   sidecars:
   - image: busybox
-    command: ["/bin/sh"]
-    args: ["-c", "while true; do echo echo $(date -u) 'test' >> /dev/null; sleep 5; done"]
     name: sidecar-sample
+    volumeMounts:
+      - name: obsdisk
+        mountPath: /logs
+    command: ["/bin/sh"]
+    args:
+    - -c
+    - |
+      while [ true ]
+      do
+      date
+      set -x
+      ls -lh /logs/diagnostic
+      set +x
+      done

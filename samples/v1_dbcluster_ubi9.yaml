@@ -1,3 +1,4 @@
+# This is a minimal DBCluster spec. See v1_dbcluster_full.yaml for more configurations.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -12,6 +13,7 @@ metadata:
   name: dbcluster-sample
 spec:
   databaseVersion: "17.5.0"
+  databaseImageOSType: UBI9
   primarySpec:
     adminUser:
       passwordRef:
@@ -22,6 +24,3 @@ spec:
       disks:
       - name: DataDisk
         size: 10Gi
-    parameters:
-      google_columnar_engine.enabled: "on"
-      google_columnar_engine.memory_size_in_mb: "256"

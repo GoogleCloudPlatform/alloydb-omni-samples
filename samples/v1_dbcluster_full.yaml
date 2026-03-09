@@ -20,8 +20,9 @@ spec:
     enableAutoHeal: true
     enableStandbyAsReadReplica: true
     numberOfStandbys: 1
-  controlPlaneAgentsVersion: 1.2.0
-  databaseVersion: 15.7.0
+  controlPlaneAgentsVersion: 1.6.0
+  databaseVersion: "17.5.0"
+  databaseImageOSType: UBI9
   isDeleted: false
   mode: ""
   primarySpec:
@@ -80,7 +81,12 @@ spec:
     parameters:
       google_columnar_engine.enabled: "on"
       google_columnar_engine.memory_size_in_mb: "256"
+      google_storage.parallel_log_replay_enabled: 'off'
+      google_pg_auth.enable_auth: 'false'
       shared_preload_libraries: "pg_cron,pg_bigm3"
+      archive_mode: 'on'
+      archive_timeout: '300'
+      work_mem: '4MB'
 # operator default values
 # shared_preload_libraries='g_stats,google_columnar_engine,google_db_advisor,google_job_scheduler,pg_stat_statements,pglogical,pgaudit'
       log_rotation_age: "2" # rotate every two minutes. Set to "0" to disable age-based rotation. If unset, no age-based rotation

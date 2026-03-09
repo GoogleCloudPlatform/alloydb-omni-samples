@@ -12,7 +12,15 @@ metadata:
   name: dbcluster-sample
 spec:
   databaseVersion: "17.5.0"
+  availability:
+    numberOfStandbys: 1
+    enableStandbyAsReadReplica: true
   primarySpec:
+    schedulingconfig:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "topology.kubernetes.io/zone"
+          whenUnsatisfiable: DoNotSchedule
     adminUser:
       passwordRef:
         name: db-pw-dbcluster-sample
@@ -22,6 +30,3 @@ spec:
       disks:
       - name: DataDisk
         size: 10Gi
-    parameters:
-      google_columnar_engine.enabled: "on"
-      google_columnar_engine.memory_size_in_mb: "256"
