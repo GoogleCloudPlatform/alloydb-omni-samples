@@ -25,6 +25,6 @@ The `webhooks/` directory demonstrates how you can dynamically mutate or validat
 
 Examples included are:
 - **alloydb-mutating-wh**: A general-purpose mutating webhook.
-- **alloydb-nodeselector-mwh**: A webhook that intercepts cluster creation boundaries to inject specific `nodeSelectors` and tolerations dynamically. This allows platform teams to forcefully schedule AlloyDB Omni pods onto designated hardware nodes without requiring end-users to specify them in the `DBCluster` YAML.
+- **alloydb-nodeselector-mwh**: A webhook that intercepts cluster creation requests to inject specific `nodeSelectors` and tolerations dynamically. This allows platform teams to forcefully schedule AlloyDB Omni pods onto designated hardware nodes without requiring end-users to specify them in the `DBCluster` YAML.
 
 These webhooks are packaged as Go applications with their own Dockerfiles and Helm charts, ready for customization.
