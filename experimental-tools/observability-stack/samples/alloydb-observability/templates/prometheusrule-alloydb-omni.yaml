@@ -1,0 +1,186 @@
+{{- if .Values.alerting.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "alloydb-observability.fullname" . }}-alloydb-omni-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "alloydb-observability.labels" . | nindent 4 }}
+spec:
+  groups:
+    # --- Resource utilization alerts ---
+    - name: alloydb-omni-resource-alerts
+      rules:
+        - alert: AlloyDBOmniHighMemoryUtilization
+          annotations:
+            summary: "DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }} memory utilization is above 95%"
+            description: >-
+              Memory utilization for DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              node {{ "{{" }} $labels.dbnode {{ "}}" }} in namespace {{ "{{" }} $labels.dbnamespace {{ "}}" }}
+              has been above 95% for more than 5 minutes.
+              Current value: {{ "{{" }} $value | humanizePercentage {{ "}}" }}.
+          expr: |
+            (
+              alloydb_omni_memory_used_byte
+              /
+              alloydb_omni_memory_limit_byte
+            ) > 0.95
+          for: 5m
+          labels:
+            severity: critical
+
+        - alert: AlloyDBOmniHighCPUUtilization
+          annotations:
+            summary: "DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }} CPU utilization is above 90%"
+            description: >-
+              CPU utilization for DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              node {{ "{{" }} $labels.dbnode {{ "}}" }} in namespace {{ "{{" }} $labels.dbnamespace {{ "}}" }}
+              has been above 90% for more than 10 minutes.
+              Current value: {{ "{{" }} $value | humanizePercentage {{ "}}" }}.
+          expr: |
+            rate(alloydb_omni_node_cpu_usage_second_total[5m])
+            /
+            (alloydb_omni_node_cpu_mcpu / 1000)
+            > 0.9
+          for: 10m
+          labels:
+            severity: warning
+
+        - alert: AlloyDBOmniDiskSpaceLow
+          annotations:
+            summary: "DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }} disk {{ "{{" }} $labels.disk {{ "}}" }} usage is above 85%"
+            description: >-
+              Disk {{ "{{" }} $labels.disk {{ "}}" }} on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              node {{ "{{" }} $labels.dbnode {{ "}}" }} in namespace {{ "{{" }} $labels.dbnamespace {{ "}}" }}
+              is using more than 85% of available space.
+              Current value: {{ "{{" }} $value | humanizePercentage {{ "}}" }}.
+          expr: |
+            (
+              alloydb_omni_node_storage_usage_per_disk_byte
+              /
+              alloydb_omni_node_storage_limit_per_disk_byte
+            ) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+
+        - alert: AlloyDBOmniDiskSpaceCritical
+          annotations:
+            summary: "DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }} disk {{ "{{" }} $labels.disk {{ "}}" }} usage is above 95%"
+            description: >-
+              Disk {{ "{{" }} $labels.disk {{ "}}" }} on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              node {{ "{{" }} $labels.dbnode {{ "}}" }} in namespace {{ "{{" }} $labels.dbnamespace {{ "}}" }}
+              is using more than 95% of available space. Immediate action required.
+              Current value: {{ "{{" }} $value | humanizePercentage {{ "}}" }}.
+          expr: |
+            (
+              alloydb_omni_node_storage_usage_per_disk_byte
+              /
+              alloydb_omni_node_storage_limit_per_disk_byte
+            ) > 0.95
+          for: 5m
+          labels:
+            severity: critical
+
+    # --- Availability alerts ---
+    - name: alloydb-omni-availability-alerts
+      rules:
+        - alert: AlloyDBOmniPostgresDown
+          annotations:
+            summary: "PostgreSQL is down on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}"
+            description: >-
+              PostgreSQL instance on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              in namespace {{ "{{" }} $labels.dbnamespace {{ "}}" }} has been down for more than 2 minutes.
+          expr: |
+            alloydb_omni_database_postgresql_up == 0
+          for: 2m
+          labels:
+            severity: critical
+
+        - alert: AlloyDBOmniPrimaryNotReady
+          annotations:
+            summary: "DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }} primary is not ready"
+            description: >-
+              The primary node of DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              in namespace {{ "{{" }} $labels.namespace {{ "}}" }} is not in ready state
+              for more than 5 minutes.
+          expr: |
+            alloydb_omni_dbcluster_primary_ready == 0
+          for: 5m
+          labels:
+            severity: critical
+
+        - alert: AlloyDBOmniHANotReady
+          annotations:
+            summary: "DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }} is not HA-ready"
+            description: >-
+              DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }} in namespace {{ "{{" }} $labels.namespace {{ "}}" }}
+              has lost HA readiness for more than 10 minutes.
+              Reason: {{ "{{" }} $labels.reason {{ "}}" }}.
+          expr: |
+            alloydb_omni_dbcluster_ha_ready == 0
+          for: 10m
+          labels:
+            severity: warning
+
+    # --- Replication alerts ---
+    - name: alloydb-omni-replication-alerts
+      rules:
+        - alert: AlloyDBOmniHighReplicationLag
+          annotations:
+            summary: "High replication flush lag on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}"
+            description: >-
+              Replication flush lag on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              in namespace {{ "{{" }} $labels.dbnamespace {{ "}}" }}
+              has exceeded 30 seconds for more than 5 minutes.
+              Current lag: {{ "{{" }} $value {{ "}}" }} ms.
+          expr: |
+            alloydb_omni_instance_postgresql_replication_flush_lag_ms > 30000
+          for: 5m
+          labels:
+            severity: warning
+
+        - alert: AlloyDBOmniHighReplayLag
+          annotations:
+            summary: "High replication replay lag on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}"
+            description: >-
+              Replication replay lag on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              in namespace {{ "{{" }} $labels.dbnamespace {{ "}}" }}
+              has exceeded 60 seconds for more than 5 minutes.
+              Current lag: {{ "{{" }} $value {{ "}}" }} ms.
+          expr: |
+            alloydb_omni_instance_postgresql_replication_replay_lag_ms > 60000
+          for: 5m
+          labels:
+            severity: warning
+
+    # --- Operations alerts ---
+    - name: alloydb-omni-operations-alerts
+      rules:
+        - alert: AlloyDBOmniCriticalIncident
+          annotations:
+            summary: "Critical incident on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}"
+            description: >-
+              A critical incident has been reported on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              in namespace {{ "{{" }} $labels.namespace {{ "}}" }}.
+              Message: {{ "{{" }} $labels.message {{ "}}" }}.
+              Code: {{ "{{" }} $labels.code {{ "}}" }}.
+          expr: |
+            alloydb_omni_dbcluster_critical_incident_create_time > 0
+          for: 0m
+          labels:
+            severity: critical
+
+        - alert: AlloyDBOmniHighConnectionCount
+          annotations:
+            summary: "High connection count on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}"
+            description: >-
+              The number of active connections on DBCluster {{ "{{" }} $labels.dbcluster {{ "}}" }}
+              in namespace {{ "{{" }} $labels.dbnamespace {{ "}}" }} has exceeded 100
+              for more than 5 minutes. Current count: {{ "{{" }} $value {{ "}}" }}.
+          expr: |
+            alloydb_omni_database_postgresql_backends > 100
+          for: 5m
+          labels:
+            severity: warning
+{{- end }}
