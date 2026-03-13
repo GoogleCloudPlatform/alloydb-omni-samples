@@ -21,6 +21,7 @@ We have organized the examples in this repository into comprehensive functional 
 - `crd/`: The raw Custom Resource Definitions (CRDs) required by the operator.
 - `monitoring-dashboards/`: Extracted dashboard configurations for integration with observability stacks.
 - `webhooks/`: Go-based sample mutating webhook servers mapped to database operations.
+- `experimental/`: Community-driven experimental tools, applications and observability stacks.
 
 ## Quickstart
 
