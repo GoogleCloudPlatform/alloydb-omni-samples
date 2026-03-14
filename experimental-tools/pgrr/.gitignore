@@ -1,0 +1,21 @@
+# Python build artifacts
+*.egg-info/
+dist/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Captured data (generated at runtime)
+queries.json
+queries_*.json
+replay_log.jsonl
+
+# macOS
+.DS_Store
