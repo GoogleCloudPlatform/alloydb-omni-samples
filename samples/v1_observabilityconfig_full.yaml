@@ -1,0 +1,338 @@
+# This ObservabilityConfig extends AlloyDB Omni with supplemental PostgreSQL metrics.
+#
+# Intent:
+# Provide operational visibility into background processes, WAL, table I/O, etc.
+#
+# Prometheus Naming Pattern:
+# alloydb_omni_custom_<metricGroup>_<metric_name>
+#
+# Example (bgwriter):
+# 'checkpoints_timed' in the 'bgwriter' group appears as:
+# alloydb_omni_custom_bgwriter_checkpoints_timed_total
+#
+apiVersion: alloydbomni.dbadmin.goog/v1
+kind: ObservabilityConfig
+metadata:
+  name: obs-extended-metrics
+spec:
+  dbClusterRefs:
+    - dbcluster-sample
+  customMetrics:
+    resourceLimits:
+      workMemory: "4MB"
+      maxParallelWorkers: 0
+    definitions:
+      - metricGroup: bgwriter
+        database: "postgres"
+        query: |
+          SELECT
+            checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time,
+            buffers_clean, maxwritten_clean, buffers_backend, buffers_backend_fsync, buffers_alloc
+          FROM pg_stat_bgwriter
+        metrics:
+          - name: checkpoints_timed
+            desc: "Scheduled checkpoints performed"
+            usage: counter
+          - name: checkpoints_req
+            desc: "Requested checkpoints performed"
+            usage: counter
+          - name: checkpoint_write_time
+            desc: "Total time writing files to disk during checkpoint (ms)"
+            usage: counter
+          - name: checkpoint_sync_time
+            desc: "Total time syncing files to disk during checkpoint (ms)"
+            usage: counter
+          - name: buffers_clean
+            desc: "Buffers written by the background writer"
+            usage: counter
+          - name: maxwritten_clean
+            desc: "Times bgwriter stopped because it wrote too many buffers"
+            usage: counter
+          - name: buffers_backend
+            desc: "Buffers written directly by backends"
+            usage: counter
+          - name: buffers_backend_fsync
+            desc: "Times backends had to execute their own fsync calls"
+            usage: counter
+          - name: buffers_alloc
+            desc: "Total buffers allocated"
+            usage: counter
+
+      - metricGroup: autovacuum
+        database: "postgres"
+        query: |
+          SELECT count(*) as active_autovacuum_workers
+          FROM pg_stat_activity
+          WHERE backend_type = 'autovacuum worker'
+        metrics:
+          - name: active_autovacuum_workers
+            desc: "Number of active autovacuum worker processes"
+            usage: gauge
+
+      - metricGroup: vacuum_progress
+        database: "postgres"
+        query: |
+          SELECT phase, COUNT(*) AS num_in_phase
+          FROM pg_stat_progress_vacuum
+          GROUP BY phase
+        metrics:
+          - name: phase
+            desc: "Current phase of the vacuum operation"
+            usage: label
+          - name: num_in_phase
+            desc: "Number of vacuum operations in this phase"
+            usage: gauge
+
+      - metricGroup: user_tables
+        database: "postgres"
+        query: |
+          SELECT
+            SUM(seq_scan) AS total_seq_scan, SUM(seq_tup_read) AS total_seq_tup_read,
+            SUM(idx_scan) AS total_idx_scan, SUM(idx_tup_fetch) AS total_idx_tup_fetch,
+            SUM(n_tup_ins) AS total_n_tup_ins, SUM(n_tup_upd) AS total_n_tup_upd,
+            SUM(n_tup_del) AS total_n_tup_del, SUM(n_live_tup) AS total_n_live_tup,
+            SUM(n_dead_tup) AS total_n_dead_tup, SUM(n_mod_since_analyze) AS total_n_mod_since_analyze
+          FROM pg_stat_user_tables
+        metrics:
+          - name: total_seq_scan
+            desc: "Total sequential scans on user tables"
+            usage: counter
+          - name: total_seq_tup_read
+            desc: "Total rows fetched by sequential scans"
+            usage: counter
+          - name: total_idx_scan
+            desc: "Total index scans on user tables"
+            usage: counter
+          - name: total_idx_tup_fetch
+            desc: "Total rows fetched by index scans"
+            usage: counter
+          - name: total_n_tup_ins
+            desc: "Total rows inserted"
+            usage: counter
+          - name: total_n_tup_upd
+            desc: "Total rows updated"
+            usage: counter
+          - name: total_n_tup_del
+            desc: "Total rows deleted"
+            usage: counter
+          - name: total_n_live_tup
+            desc: "Estimated live rows"
+            usage: gauge
+          - name: total_n_dead_tup
+            desc: "Estimated dead rows"
+            usage: gauge
+          - name: total_n_mod_since_analyze
+            desc: "Rows modified since last analyze"
+            usage: counter
+
+      - metricGroup: statio_user_tables
+        database: "postgres"
+        query: |
+          SELECT
+            SUM(heap_blks_read) AS total_heap_blks_read, SUM(heap_blks_hit) AS total_heap_blks_hit,
+            SUM(idx_blks_read) AS total_idx_blks_read, SUM(idx_blks_hit) AS total_idx_blks_hit,
+            SUM(toast_blks_read) AS total_toast_blks_read, SUM(toast_blks_hit) AS total_toast_blks_hit,
+            SUM(tidx_blks_read) AS total_tidx_blks_read, SUM(tidx_blks_hit) AS total_tidx_blks_hit
+          FROM pg_statio_user_tables
+        metrics:
+          - name: total_heap_blks_read
+            desc: "Heap blocks read from disk"
+            usage: counter
+          - name: total_heap_blks_hit
+            desc: "Heap blocks found in buffer cache"
+            usage: counter
+          - name: total_idx_blks_read
+            desc: "Index blocks read from disk"
+            usage: counter
+          - name: total_idx_blks_hit
+            desc: "Index blocks found in buffer cache"
+            usage: counter
+          - name: total_toast_blks_read
+            desc: "TOAST blocks read from disk"
+            usage: counter
+          - name: total_toast_blks_hit
+            desc: "TOAST blocks found in buffer cache"
+            usage: counter
+          - name: total_tidx_blks_read
+            desc: "TOAST index blocks read from disk"
+            usage: counter
+          - name: total_tidx_blks_hit
+            desc: "TOAST index blocks found in buffer cache"
+            usage: counter
+
+      - metricGroup: statio_user_indexes
+        database: "postgres"
+        query: |
+          SELECT SUM(idx_blks_read) AS total_index_blks_read, SUM(idx_blks_hit) AS total_index_blks_hit
+          FROM pg_statio_user_indexes
+        metrics:
+          - name: total_index_blks_read
+            desc: "Total index blocks read from disk"
+            usage: counter
+          - name: total_index_blks_hit
+            desc: "Total index blocks found in buffer cache"
+            usage: counter
+
+      - metricGroup: wal
+        database: "postgres"
+        query: |
+          SELECT
+            wal_records, wal_fpi, wal_bytes, wal_buffers_full,
+            wal_write, wal_sync, wal_write_time, wal_sync_time
+          FROM pg_stat_wal
+        metrics:
+          - name: wal_records
+            desc: "Total WAL records generated"
+            usage: counter
+          - name: wal_fpi
+            desc: "Total full page images generated"
+            usage: counter
+          - name: wal_bytes
+            desc: "Total WAL generated in bytes"
+            usage: counter
+          - name: wal_buffers_full
+            desc: "Number of times WAL buffers were full"
+            usage: counter
+          - name: wal_write
+            desc: "Number of WAL writes to disk"
+            usage: counter
+          - name: wal_sync
+            desc: "Number of WAL syncs to disk"
+            usage: counter
+          - name: wal_write_time
+            desc: "Total time spent writing WAL (ms)"
+            usage: counter
+          - name: wal_sync_time
+            desc: "Total time spent syncing WAL (ms)"
+            usage: counter
+
+      - metricGroup: stat_wal_receiver
+        database: "postgres"
+        query: |
+          SELECT status, EXTRACT(EPOCH FROM (now() - last_msg_receipt_time)) AS receiver_lag_seconds
+          FROM pg_stat_wal_receiver
+          WHERE last_msg_receipt_time IS NOT NULL
+        metrics:
+          - name: status
+            desc: "Status of the WAL receiver"
+            usage: label
+          - name: receiver_lag_seconds
+            desc: "Seconds since last message from primary"
+            usage: gauge
+
+      - metricGroup: replication_slots
+        database: "postgres"
+        query: |
+          SELECT slot_name, slot_type, active,
+            pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) AS retained_wal_bytes
+          FROM pg_replication_slots
+        metrics:
+          - name: slot_name
+            desc: "Name of the replication slot"
+            usage: label
+          - name: slot_type
+            desc: "Type of replication slot"
+            usage: label
+          - name: active
+            desc: "Is replication slot active"
+            usage: gauge
+          - name: retained_wal_bytes
+            desc: "WAL bytes retained by slot"
+            usage: gauge
+
+      - metricGroup: database
+        database: "postgres"
+        query: |
+          SELECT
+            datname, numbackends, xact_commit, xact_rollback, blks_read, blks_hit,
+            tup_returned, tup_fetched, tup_inserted, tup_updated, tup_deleted,
+            conflicts, temp_files, temp_bytes, deadlocks, checksum_failures,
+            blk_read_time, blk_write_time
+          FROM pg_stat_database WHERE datname IS NOT NULL
+        metrics:
+          - name: datname
+            desc: "Database name"
+            usage: label
+          - name: numbackends
+            desc: "Connected backends"
+            usage: gauge
+          - name: xact_commit
+            desc: "Transactions committed"
+            usage: counter
+          - name: xact_rollback
+            desc: "Transactions rolled back"
+            usage: counter
+          - name: blks_read
+            desc: "Disk blocks read"
+            usage: counter
+          - name: blks_hit
+            desc: "Disk blocks found in cache"
+            usage: counter
+          - name: tup_returned
+            desc: "Rows returned"
+            usage: counter
+          - name: tup_fetched
+            desc: "Rows fetched"
+            usage: counter
+          - name: tup_inserted
+            desc: "Rows inserted"
+            usage: counter
+          - name: tup_updated
+            desc: "Rows updated"
+            usage: counter
+          - name: tup_deleted
+            desc: "Rows deleted"
+            usage: counter
+          - name: conflicts
+            desc: "Recovery conflicts"
+            usage: counter
+          - name: temp_files
+            desc: "Temporary files created"
+            usage: counter
+          - name: temp_bytes
+            desc: "Temporary file bytes"
+            usage: counter
+          - name: deadlocks
+            desc: "Deadlocks detected"
+            usage: counter
+          - name: checksum_failures
+            desc: "Data checksum failures"
+            usage: counter
+          - name: blk_read_time
+            desc: "Time spent reading blocks (ms)"
+            usage: counter
+          - name: blk_write_time
+            desc: "Time spent writing blocks (ms)"
+            usage: counter
+
+      - metricGroup: long_running_transactions
+        database: "postgres"
+        query: |
+          SELECT
+            COUNT(*) FILTER (WHERE now() - xact_start > INTERVAL '5 minutes') AS long_running_xact_count,
+            COALESCE(EXTRACT(EPOCH FROM MAX(now() - xact_start)), 0) AS max_xact_age_seconds
+          FROM pg_stat_activity
+          WHERE backend_type = 'client backend' AND xact_start IS NOT NULL
+        metrics:
+          - name: long_running_xact_count
+            desc: "Client transactions running > 5m"
+            usage: gauge
+          - name: max_xact_age_seconds
+            desc: "Max transaction age in seconds"
+            usage: gauge
+
+      - metricGroup: stat_statements
+        database: "postgres"
+        query: |
+          SELECT sum(calls) as total_calls, sum(total_exec_time) as total_exec_time_ms, sum(rows) as total_rows
+          FROM pg_stat_statements
+        metrics:
+          - name: total_calls
+            desc: "Total statement calls"
+            usage: counter
+          - name: total_exec_time_ms
+            desc: "Total statement execution time (ms)"
+            usage: counter
+          - name: total_rows
+            desc: "Total rows processed"
+            usage: counter
