@@ -72,9 +72,9 @@ spec:
       - metricGroup: vacuum_progress
         database: "postgres"
         query: |
-          SELECT phase, COUNT(*) AS num_in_phase
-          FROM pg_stat_progress_vacuum
-          GROUP BY phase
+          WITH phases(phase) AS (VALUES ('initializing'), ('scanning heap'), ('vacuuming indexes'), ('vacuuming heap'), ('cleaning up indexes'), ('truncating heap'), ('final cleanup'))
+          SELECT p.phase, COALESCE(counts.num_in_phase, 0) AS num_in_phase
+          FROM phases p LEFT JOIN (SELECT phase, count(*) AS num_in_phase FROM pg_stat_progress_vacuum GROUP BY phase) AS counts USING (phase)
         metrics:
           - name: phase
             desc: "Current phase of the vacuum operation"
@@ -204,6 +204,9 @@ spec:
         query: |
           SELECT status, COALESCE(EXTRACT(EPOCH FROM (now() - last_msg_receipt_time)), -1) AS receiver_lag_seconds
           FROM pg_stat_wal_receiver
+          UNION ALL
+          SELECT 'not_running'::text, -1::float
+          WHERE NOT EXISTS (SELECT 1 FROM pg_stat_wal_receiver)
         metrics:
           - name: status
             desc: "Status of the WAL receiver"
