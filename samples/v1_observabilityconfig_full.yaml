@@ -130,7 +130,6 @@ spec:
         query: |
           SELECT
             SUM(heap_blks_read) AS total_heap_blks_read, SUM(heap_blks_hit) AS total_heap_blks_hit,
-            SUM(idx_blks_read) AS total_idx_blks_read, SUM(idx_blks_hit) AS total_idx_blks_hit,
             SUM(toast_blks_read) AS total_toast_blks_read, SUM(toast_blks_hit) AS total_toast_blks_hit,
             SUM(tidx_blks_read) AS total_tidx_blks_read, SUM(tidx_blks_hit) AS total_tidx_blks_hit
           FROM pg_statio_user_tables
@@ -140,12 +139,6 @@ spec:
             usage: counter
           - name: total_heap_blks_hit
             desc: "Heap blocks found in buffer cache"
-            usage: counter
-          - name: total_idx_blks_read
-            desc: "Index blocks read from disk"
-            usage: counter
-          - name: total_idx_blks_hit
-            desc: "Index blocks found in buffer cache"
             usage: counter
           - name: total_toast_blks_read
             desc: "TOAST blocks read from disk"
@@ -209,9 +202,8 @@ spec:
       - metricGroup: stat_wal_receiver
         database: "postgres"
         query: |
-          SELECT status, EXTRACT(EPOCH FROM (now() - last_msg_receipt_time)) AS receiver_lag_seconds
+          SELECT status, COALESCE(EXTRACT(EPOCH FROM (now() - last_msg_receipt_time)), -1) AS receiver_lag_seconds
           FROM pg_stat_wal_receiver
-          WHERE last_msg_receipt_time IS NOT NULL
         metrics:
           - name: status
             desc: "Status of the WAL receiver"
@@ -321,6 +313,7 @@ spec:
             desc: "Max transaction age in seconds"
             usage: gauge
 
+      # Note: This group requires the pg_stat_statements extension to be enabled.
       - metricGroup: stat_statements
         database: "postgres"
         query: |
