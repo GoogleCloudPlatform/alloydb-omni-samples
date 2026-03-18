@@ -170,7 +170,11 @@ if kubectl exec "$podName" -n "$ns" -c database -- test -d /mnt/disks/pgsql/data
     echo "pre-upgrade data folder path does not contain major version '/mnt/disks/pgsql/data'"
 else
     dataDirWithMV=$?
-    echo "pre-upgrade data folder path contains major version '/mnt/disks/pgsql/$sourceMV/data'"
+    if ! kubectl exec "$podName" -n "$ns" -c database -- test -d /mnt/disks/pgsql/$sourceMV/db; then
+        echo "Error: Neither legacy path '/mnt/disks/pgsql/data' nor versioned path '/mnt/disks/pgsql/$sourceMV/db' exists. Aborting."
+        exit 1
+    fi
+    echo "pre-upgrade data folder path contains major version '/mnt/disks/pgsql/$sourceMV/db'"
 fi
 
 echo "Alias pg$sourceMV data directory"
@@ -178,13 +182,13 @@ echo "Alias pg$sourceMV data directory"
 kubectl exec -i "$podName" -n "$ns" -c database -- /bin/bash -c "
   supervisorctl.par stop postgres;
   mkdir -p /mnt/disks/pgsql/$sourceMV;
-  [ $dataDirWithMV -eq 0 ] && mv /mnt/disks/pgsql/data /mnt/disks/pgsql/$sourceMV/data;
+  [ $dataDirWithMV -eq 0 ] && mv /mnt/disks/pgsql/data /mnt/disks/pgsql/$sourceMV/db;
   cp -r /usr/lib/postgresql/$sourceMV/bin /mnt/disks/pgsql/$sourceMV/.;
   cp -r /usr/lib/postgresql/$sourceMV/lib /mnt/disks/pgsql/$sourceMV/.;
   cp -r /usr/share/postgresql/$sourceMV /mnt/disks/pgsql/$sourceMV/share;
   rm /mnt/disks/pgsql/$sourceMV/share/postgresql.conf.sample;
   cp /usr/share/postgresql/postgresql.conf.sample /mnt/disks/pgsql/$sourceMV/share/postgresql.conf.sample;
-  chmod 2740 /mnt/disks/pgsql/$sourceMV/data;
+  chmod 2740 /mnt/disks/pgsql/$sourceMV/db;
 "
 
 if kubectl exec "$podName" -n "$ns" -c database -- test -d /mnt/disks/pgsql/data; then
@@ -210,7 +214,7 @@ kubectl wait --for=jsonpath='{.status.primary.currentDatabaseVersion}'="'$newDBV
 if kubectl exec "$podName" -n "$ns" -c database -- test -d /mnt/disks/pgsql/data; then
     postUpgradeDataDir="/mnt/disks/pgsql/data"
 else
-    postUpgradeDataDir="/mnt/disks/pgsql/$targetMV/data"
+    postUpgradeDataDir="/mnt/disks/pgsql/$targetMV/db"
 fi
 
 echo "post-upgrade data folder path is '$postUpgradeDataDir'"
@@ -221,18 +225,18 @@ kubectl exec -i "$podName" -n "$ns" -c database -- /bin/bash -c "
   rm -fr $postUpgradeDataDir;
   initdb -D $postUpgradeDataDir -U alloydbadmin --data-checksums --encoding=UTF8 --locale=C --locale-provider=icu --icu-locale=und-x-icu --auth-host=trust --auth-local=reject;
   cd /mnt/disks/pgsql;
-  cp /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf.bak;
-  echo \"local   all     all             trust\" >> /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf;
-  echo \"host    all     all     127.0.0.1/32      trust\" >> /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf;
+  cp /mnt/disks/pgsql/$sourceMV/db/pg_hba.conf /mnt/disks/pgsql/$sourceMV/db/pg_hba.conf.bak;
+  echo \"local   all     all             trust\" >> /mnt/disks/pgsql/$sourceMV/db/pg_hba.conf;
+  echo \"host    all     all     127.0.0.1/32      trust\" >> /mnt/disks/pgsql/$sourceMV/db/pg_hba.conf;
   rm $postUpgradeDataDir/pg_hba.conf;
   echo \"local   all     all             trust\" >> $postUpgradeDataDir/pg_hba.conf;
   echo \"host    all     all     127.0.0.1/32      trust\" >> $postUpgradeDataDir/pg_hba.conf;
-  chmod 2740 /mnt/disks/pgsql/$sourceMV/data;
-  pg_upgrade -U alloydbadmin -b /mnt/disks/pgsql/$sourceMV/bin -B /usr/lib/postgresql/$targetMV/bin -d /mnt/disks/pgsql/$sourceMV/data -D $postUpgradeDataDir --link -v;
-  cp /mnt/disks/pgsql/$sourceMV/data/pg_hba.conf.bak $postUpgradeDataDir/pg_hba.conf;
-  cp -r /mnt/disks/pgsql/$sourceMV/data/postgresql.conf $postUpgradeDataDir/.;
-  cp -r /mnt/disks/pgsql/$sourceMV/data/postgresql.conf.d $postUpgradeDataDir/.;
-  cp -r /mnt/disks/pgsql/$sourceMV/data/parambackup $postUpgradeDataDir/.;
+  chmod 2740 /mnt/disks/pgsql/$sourceMV/db;
+  pg_upgrade -U alloydbadmin -b /mnt/disks/pgsql/$sourceMV/bin -B /usr/lib/postgresql/$targetMV/bin -d /mnt/disks/pgsql/$sourceMV/db -D $postUpgradeDataDir --link -v;
+  cp /mnt/disks/pgsql/$sourceMV/db/pg_hba.conf.bak $postUpgradeDataDir/pg_hba.conf;
+  cp -r /mnt/disks/pgsql/$sourceMV/db/postgresql.conf $postUpgradeDataDir/.;
+  cp -r /mnt/disks/pgsql/$sourceMV/db/postgresql.conf.d $postUpgradeDataDir/.;
+  cp -r /mnt/disks/pgsql/$sourceMV/db/parambackup $postUpgradeDataDir/.;
   supervisorctl.par start postgres;
   rm -fr /mnt/disks/pgsql/$sourceMV/;
 "
