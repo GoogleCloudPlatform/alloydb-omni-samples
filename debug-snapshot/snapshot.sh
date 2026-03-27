@@ -39,7 +39,7 @@ mkdir -p "$SNAPSHOT_DIR/k8s-state"
 echo "Capturing public resource manifests..."
 PUBLIC_CRDS=$(kubectl get crds -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep "alloydbomni.dbadmin.goog" | grep -v "internal" || true)
 for CRD in $PUBLIC_CRDS; do
-    SHORT_NAME=$(echo $CRD | cut -d'.' -f1)
+    SHORT_NAME=$(echo "$CRD" | cut -d'.' -f1)
     echo "  - $SHORT_NAME"
     kubectl get "$CRD" -n "$DB_CLUSTER_NAMESPACE" -o yaml > "$SNAPSHOT_DIR/manifests/external/$SHORT_NAME.yaml" 2>/dev/null || true
 done
@@ -48,7 +48,7 @@ done
 echo "Capturing internal resource manifests..."
 INTERNAL_CRDS=$(kubectl get crds -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep "alloydbomni.internal.dbadmin.goog" || true)
 for CRD in $INTERNAL_CRDS; do
-    SHORT_NAME=$(echo $CRD | cut -d'.' -f1)
+    SHORT_NAME=$(echo "$CRD" | cut -d'.' -f1)
     echo "  - $SHORT_NAME"
     kubectl get "$CRD" -n "$DB_CLUSTER_NAMESPACE" -o yaml > "$SNAPSHOT_DIR/manifests/internal/$SHORT_NAME.yaml" 2>/dev/null || true
 done
