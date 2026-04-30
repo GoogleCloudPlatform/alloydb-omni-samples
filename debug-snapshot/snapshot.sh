@@ -75,6 +75,7 @@ for POD_NAME in $PODS; do
     echo "Capturing logs for pod: $POD_NAME"
     kubectl logs -n "$DB_CLUSTER_NAMESPACE" "$POD_NAME" -c database --tail=2000 > "$SNAPSHOT_DIR/logs/$POD_NAME-dbdaemon.log"
     kubectl exec -n "$DB_CLUSTER_NAMESPACE" "$POD_NAME" -c database -- cat /obs/diagnostic/postgresql.log > "$SNAPSHOT_DIR/logs/$POD_NAME-postgresql.log"
+    kubectl exec -n "$DB_CLUSTER_NAMESPACE" "$POD_NAME" -c database -- cat /obs/diagnostic/postgresql.internal > "$SNAPSHOT_DIR/logs/$POD_NAME-postgresql.internal"
 done
 
 # 8. Review for sensitive information
