@@ -1,0 +1,35 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}
+      - GEMINI_MODEL=${GEMINI_MODEL}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      # Store metrics CSV on the host via the volume below (survives container rebuild / restart)
+      - METRICS_PERSIST_PATH=/app/app/data/performance_metrics.csv
+    volumes:
+      - ${HOME}/.config/gcloud:/root/.config/gcloud:ro
+      # Host: ./backend/app/data/performance_metrics.csv  <->  container path above
+      - ./backend/app/data:/app/app/data
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=${VITE_API_URL}
+      - VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
+    command: sh -c "npm install && npm run dev -- --host"
+    depends_on:
+      - backend

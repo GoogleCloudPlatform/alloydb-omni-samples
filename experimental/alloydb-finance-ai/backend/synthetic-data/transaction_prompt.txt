@@ -1,0 +1,152 @@
+You are generating synthetic financial transaction data for an AI-powered personal finance application built on PostgreSQL / AlloyDB.
+
+Return ONLY raw CSV output.
+
+Do NOT include explanations.
+Do NOT include markdown.
+Do NOT include commentary.
+Do NOT include code blocks.
+Do NOT include backticks.
+Do NOT include any text before or after the CSV.
+
+The first row MUST be the header exactly as shown below.
+
+transaction_id,timestamp,amount,merchant_name,merchant_category,spending_category,transaction_type,payment_method,city,country,currency
+
+After the header generate exactly 100 rows.
+
+Total output must be exactly 101 rows including the header.
+
+Formatting Rules
+
+Each row must contain exactly 11 comma-separated fields.
+Do not include commas inside values.
+Do not wrap fields in quotes.
+Do not include blank lines.
+Do not include spaces before or after commas.
+Ensure every row has the same number of columns as the header.
+The output must be valid CSV that can be parsed by PostgreSQL COPY or pandas.read_csv without modification.
+
+Schema Specification
+
+transaction_id  
+uuid-v4 string
+
+timestamp  
+ISO-8601 datetime in UTC
+
+amount  
+number  
+positive values represent credit  
+negative values represent debit
+
+merchant_name  
+string with no commas
+
+merchant_category must be one of  
+restaurant  
+supermarket  
+gas_station  
+airline  
+ecommerce  
+streaming_service  
+landlord  
+gym  
+pharmacy  
+utility_provider  
+employer  
+rideshare  
+hotel  
+insurance  
+subscription_service
+
+spending_category must be one of  
+groceries  
+dining  
+transportation  
+rent  
+utilities  
+entertainment  
+travel  
+subscriptions  
+healthcare  
+shopping  
+income
+
+transaction_type must be one of  
+debit  
+credit  
+transfer  
+refund
+
+payment_method must be one of  
+credit_card  
+debit_card  
+bank_transfer  
+cash  
+mobile_wallet
+
+city must be a realistic US city.
+
+country must be a valid 2 letter ISO code.
+
+currency must be a valid currency code such as  
+USD  
+EUR  
+GBP  
+JPY
+
+Financial Behavior Rules
+
+Salary income  
+Amount between 2000 and 8000  
+merchant_category must be employer  
+spending_category must be income  
+transaction_type must be credit
+
+Rent  
+Amount between -800 and -3500  
+merchant_category must be landlord  
+spending_category must be rent  
+transaction_type must be debit
+
+Groceries  
+Amount between -40 and -250  
+merchant_category must be supermarket  
+spending_category must be groceries  
+transaction_type must be debit
+
+Subscriptions  
+Amount between -5 and -30  
+merchant_category must be streaming_service or subscription_service  
+spending_category must be subscriptions  
+transaction_type must be debit
+
+Dining  
+merchant_category must be restaurant  
+spending_category must be dining  
+amount between -15 and -180  
+transaction_type must be debit
+
+Travel  
+merchant_category may be airline hotel or rideshare  
+spending_category must be travel  
+amount between -200 and -2000
+
+Time Distribution
+
+Timestamps must span the last 6 months.
+
+Transaction Type Rules
+
+credit transactions must have positive amounts.  
+debit transactions must have negative amounts.
+
+Data Quality Constraints
+
+transaction_id must never repeat.  
+UUIDs must follow realistic uuid-v4 format.  
+merchant_name must not contain commas.
+
+Return only the CSV header and 100 rows.  
+No additional text.

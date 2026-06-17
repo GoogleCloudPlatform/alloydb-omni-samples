@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AlloyFinance — Dev Observer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: #0f0f0f; color: #e0e0e0; padding: 24px; }
+    h1 { color: #7ee8a2; font-size: 18px; margin-bottom: 16px; }
+    h2 { color: #7eb8e8; font-size: 14px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+    .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 16px; }
+    .card.full { grid-column: 1 / -1; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { text-align: left; padding: 6px 10px; color: #888; border-bottom: 1px solid #2a2a2a; }
+    td { padding: 6px 10px; border-bottom: 1px solid #1f1f1f; }
+    tr:last-child td { border-bottom: none; }
+    .pos { color: #7ee8a2; }
+    .neg { color: #e87e7e; }
+    .badge { background: #2a2a2a; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
+
+    .form-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+    label { font-size: 11px; color: #888; display: block; margin-bottom: 4px; }
+    select, input[type=number], input[type=text] {
+      background: #111; border: 1px solid #333; color: #e0e0e0;
+      padding: 6px 10px; border-radius: 4px; font-family: monospace; font-size: 12px;
+    }
+    button {
+      background: #7eb8e8; color: #000; border: none; padding: 7px 14px;
+      border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px; font-weight: bold;
+    }
+    button:hover { background: #9ecfff; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.danger { background: #e87e7e; }
+    button.danger:hover { background: #ffaaaa; }
+
+    .status { font-size: 12px; margin-top: 8px; min-height: 18px; }
+    .ok { color: #7ee8a2; }
+    .err { color: #e87e7e; }
+
+    .refresh { float: right; font-size: 11px; color: #555; cursor: pointer; }
+    .refresh:hover { color: #888; }
+    .empty { color: #444; font-size: 12px; padding: 10px 0; }
+
+    /* ── Tabs ── */
+    .tab-bar {
+      display: flex; gap: 4px; margin-bottom: 20px;
+      border-bottom: 1px solid #2a2a2a; padding-bottom: 0;
+    }
+    .tab-btn {
+      background: none; color: #666; border: none; border-bottom: 2px solid transparent;
+      padding: 8px 16px; cursor: pointer; font-family: monospace; font-size: 13px;
+      font-weight: bold; border-radius: 0; margin-bottom: -1px;
+    }
+    .tab-btn:hover { color: #aaa; background: none; }
+    .tab-btn.active { color: #7ee8a2; border-bottom-color: #7ee8a2; background: none; }
+
+    .tab-page { display: none; }
+    .tab-page.active { display: block; }
+
+    /* ── NL2SQL ── */
+    .nl-textarea {
+      width: 100%; background: #111; border: 1px solid #333; color: #e0e0e0;
+      padding: 10px; border-radius: 4px; font-family: monospace; font-size: 13px;
+      resize: vertical; min-height: 70px;
+    }
+    .nl-textarea:focus { outline: none; border-color: #7eb8e8; }
+
+    .nl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .nl-chip {
+      background: #1f1f1f; border: 1px solid #333; color: #999;
+      padding: 4px 10px; border-radius: 12px; cursor: pointer;
+      font-family: monospace; font-size: 11px; font-weight: normal;
+    }
+    .nl-chip:hover { border-color: #7eb8e8; color: #7eb8e8; background: #1f1f1f; }
+
+    .nl-hint { font-size: 11px; color: #555; margin-top: 6px; }
+
+    .sql-block {
+      background: #111; border: 1px solid #2a2a2a; border-radius: 4px;
+      padding: 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+      color: #c8e8a2; min-height: 48px; margin-top: 10px;
+    }
+    .sql-block.loading { color: #555; font-style: italic; }
+
+    .sql-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+
+    .results-wrap { overflow-x: auto; margin-top: 10px; }
+    .results-wrap table td { color: #ccc; }
+    .null-val { color: #444; font-style: italic; }
+
+    .rules-dl { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .rules-row { display: grid; grid-template-columns: 200px 1fr; gap: 8px; font-size: 12px; }
+    .rules-row dt { color: #888; }
+    .rules-row dd { color: #ccc; }
+  </style>
+</head>
+<body>
+
+<h1>⬡ AlloyFinance — Dev Observer</h1>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('data')">Data Explorer</button>
+  <button class="tab-btn" onclick="switchTab('nl2sql')">NL2SQL Demo</button>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     TAB 1 — Data Explorer (original content)
+═══════════════════════════════════════════════════ -->
+<div id="tab-data" class="tab-page active">
+<div class="grid">
+
+  <!-- BUDGET PREFS -->
+  <div class="card">
+    <h2>BudgetPrefs <span class="refresh" onclick="loadBudgets()">↻ refresh</span></h2>
+    <div id="budget-table"><span class="empty">loading...</span></div>
+
+    <div class="form-row">
+      <div>
+        <label>Category</label>
+        <select id="b-category">
+          <option>groceries</option><option>dining</option><option>transportation</option>
+          <option>rent</option><option>utilities</option><option>entertainment</option>
+          <option>travel</option><option>subscriptions</option><option>healthcare</option>
+          <option>shopping</option><option>income</option>
+        </select>
+      </div>
+      <div>
+        <label>Budget Limit ($)</label>
+        <input type="number" id="b-amount" placeholder="e.g. 200" min="0.01" step="0.01" style="width:110px" />
+      </div>
+      <button onclick="createBudget()">Set Budget</button>
+    </div>
+    <div class="status" id="budget-status"></div>
+  </div>
+
+  <!-- BUDGET USAGE -->
+  <div class="card">
+    <h2>Budget Usage (this month) <span class="refresh" onclick="loadUsage()">↻ refresh</span></h2>
+    <div id="usage-table"><span class="empty">loading...</span></div>
+  </div>
+
+  <!-- ADD TRANSACTION -->
+  <div class="card full">
+    <h2>Add Transaction</h2>
+    <div class="form-row">
+      <div>
+        <label>Merchant Name</label>
+        <input type="text" id="t-merchant" placeholder="e.g. Whole Foods" style="width:150px" />
+      </div>
+      <div>
+        <label>Merchant Category</label>
+        <select id="t-merchant-cat">
+          <option>restaurant</option><option>supermarket</option><option>gas_station</option>
+          <option>airline</option><option>ecommerce</option><option>streaming_service</option>
+          <option>landlord</option><option>gym</option><option>pharmacy</option>
+          <option>utility_provider</option><option>employer</option><option>rideshare</option>
+          <option>hotel</option><option>insurance</option><option>subscription_service</option>
+        </select>
+      </div>
+      <div>
+        <label>Spending Category</label>
+        <select id="t-spending-cat">
+          <option>groceries</option><option>dining</option><option>transportation</option>
+          <option>rent</option><option>utilities</option><option>entertainment</option>
+          <option>travel</option><option>subscriptions</option><option>healthcare</option>
+          <option>shopping</option><option>income</option>
+        </select>
+      </div>
+      <div>
+        <label>Amount ($)</label>
+        <input type="number" id="t-amount" placeholder="e.g. -42.50" step="0.01" style="width:110px" />
+      </div>
+      <div>
+        <label>Type</label>
+        <select id="t-type">
+          <option>debit</option><option>credit</option><option>transfer</option><option>refund</option>
+        </select>
+      </div>
+      <div>
+        <label>Payment Method</label>
+        <select id="t-method">
+          <option>credit_card</option><option>debit_card</option><option>bank_transfer</option>
+          <option>cash</option><option>mobile_wallet</option>
+        </select>
+      </div>
+      <div>
+        <label>City</label>
+        <input type="text" id="t-city" placeholder="e.g. New York" style="width:120px" />
+      </div>
+      <div>
+        <label>Description (optional)</label>
+        <input type="text" id="t-desc" placeholder="e.g. weekly groceries" style="width:160px" />
+      </div>
+      <button onclick="createTransaction()">Add Transaction</button>
+    </div>
+    <div class="status" id="txn-status"></div>
+  </div>
+
+  <!-- RECENT TRANSACTIONS -->
+  <div class="card full">
+    <h2>
+      Recent Transactions
+      <span style="margin-left:8px">
+        <input type="number" id="txn-limit" value="20" min="1" max="500" style="width:55px" />
+      </span>
+      <span class="refresh" onclick="loadTransactions()">↻ refresh</span>
+    </h2>
+    <div id="txn-table"><span class="empty">loading...</span></div>
+  </div>
+
+</div>
+</div><!-- /tab-data -->
+
+
+<!-- ══════════════════════════════════════════════════
+     TAB 2 — NL2SQL Demo
+═══════════════════════════════════════════════════ -->
+<div id="tab-nl2sql" class="tab-page">
+<div style="display:flex; flex-direction:column; gap:20px;">
+
+  <!-- Question input -->
+  <div class="card">
+    <h2>Ask a question</h2>
+    <textarea
+      id="nl-question"
+      class="nl-textarea"
+      placeholder="e.g. Show total spending by category this month"
+      onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter') generateSQL()"
+    ></textarea>
+    <p class="nl-hint">Press ⌘ Enter or click Generate SQL</p>
+
+    <div class="nl-chips">
+      <button class="nl-chip" onclick="setQuestion(this)">Show total spending by category</button>
+      <button class="nl-chip" onclick="setQuestion(this)">Which categories am I over budget on?</button>
+      <button class="nl-chip" onclick="setQuestion(this)">What did I spend at restaurants last month?</button>
+      <button class="nl-chip" onclick="setQuestion(this)">Top 5 merchants by total spend</button>
+      <button class="nl-chip" onclick="setQuestion(this)">How much did I spend on groceries this month?</button>
+      <button class="nl-chip" onclick="setQuestion(this)">Show all debit transactions in New York</button>
+      <button class="nl-chip" onclick="setQuestion(this)">Compare my spending to my budget limits</button>
+    </div>
+
+    <div class="form-row" style="margin-top:14px">
+      <button id="btn-generate" onclick="generateSQL()">Generate SQL</button>
+    </div>
+    <div class="status" id="gen-status"></div>
+  </div>
+
+  <!-- Generated SQL -->
+  <div class="card" id="sql-card" style="display:none">
+    <h2>Generated SQL</h2>
+    <div id="sql-display" class="sql-block"></div>
+    <div class="sql-actions">
+      <button id="btn-run" onclick="runSQL()" disabled>Run SQL</button>
+      <span class="status" id="run-status"></span>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="card" id="results-card" style="display:none">
+    <h2>Results <span id="results-count" style="color:#555;font-size:11px;text-transform:none;letter-spacing:0"></span></h2>
+    <div class="results-wrap" id="results-table"></div>
+  </div>
+
+  <!-- Rules / Config -->
+  <div class="card">
+    <h2>NL2SQL Configuration</h2>
+    <dl class="rules-dl">
+      <div class="rules-row"><dt>Config name</dt><dd><span class="badge">app_config</span></dd></div>
+      <div class="rules-row"><dt>Model binding</dt><dd><span class="badge">gemini-2.5-flash-lite-global</span></dd></div>
+      <div class="rules-row"><dt>Tables exposed</dt><dd>users · items · transactions · BudgetPrefs</dd></div>
+      <div class="rules-row"><dt>Spending queries</dt><dd>Use debit transactions (<code>transaction_type = 'debit'</code>)</dd></div>
+      <div class="rules-row"><dt>Budget mapping</dt><dd><code>BudgetPrefs.category</code> ↔ <code>transactions.spending_category</code></dd></div>
+      <div class="rules-row"><dt>Custom context</dt><dd>Schema descriptions and column meanings added to config</dd></div>
+      <div class="rules-row"><dt>Templates</dt><dd>
+        List transactions · Spending by category · Budget lookup ·
+        Budget comparison · Over-budget detection · Spending by merchant ·
+        City filtering · Debit vs credit filtering
+      </dd></div>
+    </dl>
+  </div>
+
+</div>
+</div><!-- /tab-nl2sql -->
+
+
+<script>
+const API = 'http://localhost:8000';
+
+// ── Tab switching ────────────────────────────────────────────────────────────
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// ── Budgets ────────────────────────────────────────────────────────────────
+
+async function loadBudgets() {
+  const el = document.getElementById('budget-table');
+  try {
+    const res = await fetch(`${API}/api/budgets/usage`);
+    const rows = await res.json();
+    if (!rows.length) { el.innerHTML = '<span class="empty">No budgets set yet.</span>'; return; }
+    el.innerHTML = `
+      <table>
+        <tr><th>Category</th><th>Limit ($)</th></tr>
+        ${rows.map(r => `
+          <tr>
+            <td><span class="badge">${r.category}</span></td>
+            <td>${r.budget_limit.toFixed(2)}</td>
+          </tr>`).join('')}
+      </table>`;
+  } catch(e) { el.innerHTML = `<span class="err">Error: ${e.message}</span>`; }
+}
+
+async function createBudget() {
+  const category = document.getElementById('b-category').value;
+  const amount   = parseFloat(document.getElementById('b-amount').value);
+  const status   = document.getElementById('budget-status');
+  if (!amount || amount <= 0) { status.innerHTML = '<span class="err">Amount must be > 0</span>'; return; }
+  try {
+    const res = await fetch(`${API}/api/budgets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category, amount }),
+    });
+    const data = await res.json();
+    if (data.status === 0) {
+      status.innerHTML = `<span class="ok">✓ Budget set for ${category}</span>`;
+      loadBudgets(); loadUsage();
+    } else {
+      status.innerHTML = `<span class="err">Error: ${data.error}</span>`;
+    }
+  } catch(e) { status.innerHTML = `<span class="err">Error: ${e.message}</span>`; }
+}
+
+// ── Budget Usage ────────────────────────────────────────────────────────────
+
+async function loadUsage() {
+  const el = document.getElementById('usage-table');
+  try {
+    const res  = await fetch(`${API}/api/budgets/usage`);
+    const rows = await res.json();
+    if (!rows.length) { el.innerHTML = '<span class="empty">No budgets set yet.</span>'; return; }
+    el.innerHTML = `
+      <table>
+        <tr><th>Category</th><th>Spent ($)</th><th>Limit ($)</th><th>Used</th></tr>
+        ${rows.map(r => {
+          const pct  = r.budget_limit > 0 ? Math.min(100, (r.total_spent / r.budget_limit) * 100) : 0;
+          const over = r.total_spent > r.budget_limit;
+          return `
+          <tr>
+            <td><span class="badge">${r.category}</span></td>
+            <td class="${over ? 'neg' : 'pos'}">${r.total_spent.toFixed(2)}</td>
+            <td>${r.budget_limit.toFixed(2)}</td>
+            <td>
+              <div style="background:#222;border-radius:3px;height:8px;width:100px;overflow:hidden">
+                <div style="background:${over?'#e87e7e':'#7ee8a2'};width:${pct}%;height:100%"></div>
+              </div>
+              <span style="font-size:10px;color:#666">${pct.toFixed(0)}%</span>
+            </td>
+          </tr>`}).join('')}
+      </table>`;
+  } catch(e) { el.innerHTML = `<span class="err">Error: ${e.message}</span>`; }
+}
+
+// ── Transactions ────────────────────────────────────────────────────────────
+
+async function loadTransactions() {
+  const el    = document.getElementById('txn-table');
+  const limit = document.getElementById('txn-limit').value || 20;
+  try {
+    const res  = await fetch(`${API}/api/transactions/recent?limit=${limit}`);
+    const rows = await res.json();
+    if (!rows.length) { el.innerHTML = '<span class="empty">No transactions found.</span>'; return; }
+    el.innerHTML = `
+      <table>
+        <tr><th>Date</th><th>Merchant</th><th>Category</th><th>Type</th><th>Method</th><th>Amount</th><th>City</th><th>Description</th></tr>
+        ${rows.map(r => {
+          const amt = parseFloat(r.amount);
+          const date = new Date(r.timestamp).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+          return `
+          <tr>
+            <td style="color:#666">${date}</td>
+            <td>${r.merchant_name}</td>
+            <td><span class="badge">${r.spending_category}</span></td>
+            <td style="color:#888">${r.transaction_type}</td>
+            <td style="color:#888">${r.payment_method}</td>
+            <td class="${amt < 0 ? 'neg' : 'pos'}">${amt < 0 ? '-' : '+'}$${Math.abs(amt).toFixed(2)}</td>
+            <td style="color:#888">${r.city}</td>
+            <td style="color:#555">${r.description || '—'}</td>
+          </tr>`}).join('')}
+      </table>`;
+  } catch(e) { el.innerHTML = `<span class="err">Error: ${e.message}</span>`; }
+}
+
+// ── Add Transaction ─────────────────────────────────────────────────────────
+
+async function createTransaction() {
+  const status = document.getElementById('txn-status');
+  const payload = {
+    merchant_name:     document.getElementById('t-merchant').value.trim(),
+    merchant_category: document.getElementById('t-merchant-cat').value,
+    spending_category: document.getElementById('t-spending-cat').value,
+    amount:            parseFloat(document.getElementById('t-amount').value),
+    transaction_type:  document.getElementById('t-type').value,
+    payment_method:    document.getElementById('t-method').value,
+    city:              document.getElementById('t-city').value.trim(),
+    description:       document.getElementById('t-desc').value.trim() || null,
+  };
+
+  if (!payload.merchant_name) { status.innerHTML = '<span class="err">Merchant name is required</span>'; return; }
+  if (!payload.city)          { status.innerHTML = '<span class="err">City is required</span>'; return; }
+  if (isNaN(payload.amount))  { status.innerHTML = '<span class="err">Amount is required</span>'; return; }
+
+  try {
+    const res = await fetch(`${API}/api/transactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      status.innerHTML = `<span class="ok">✓ Transaction added — ID: ${data.transaction_id}</span>`;
+      ['t-merchant', 't-amount', 't-city', 't-desc'].forEach(id => document.getElementById(id).value = '');
+      loadTransactions();
+      loadUsage();
+    } else {
+      const err = await res.json();
+      status.innerHTML = `<span class="err">Error ${res.status}: ${JSON.stringify(err.detail)}</span>`;
+    }
+  } catch(e) { status.innerHTML = `<span class="err">Error: ${e.message}</span>`; }
+}
+
+// ── NL2SQL ──────────────────────────────────────────────────────────────────
+
+let currentSQL = '';
+
+function setQuestion(btn) {
+  document.getElementById('nl-question').value = btn.textContent.trim();
+}
+
+async function generateSQL() {
+  const question = document.getElementById('nl-question').value.trim();
+  if (!question) return;
+
+  const genStatus  = document.getElementById('gen-status');
+  const sqlCard    = document.getElementById('sql-card');
+  const sqlDisplay = document.getElementById('sql-display');
+  const btnGen     = document.getElementById('btn-generate');
+  const btnRun     = document.getElementById('btn-run');
+  const resultsCard = document.getElementById('results-card');
+
+  // Reset state
+  currentSQL = '';
+  btnRun.disabled = true;
+  resultsCard.style.display = 'none';
+  sqlCard.style.display = 'block';
+  sqlDisplay.className = 'sql-block loading';
+  sqlDisplay.textContent = 'Generating…';
+  genStatus.innerHTML = '';
+  btnGen.disabled = true;
+  document.getElementById('run-status').innerHTML = '';
+
+  try {
+    const res = await fetch(`${API}/api/nl2sql/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    currentSQL = data.sql;
+    sqlDisplay.className = 'sql-block';
+    sqlDisplay.textContent = currentSQL;
+    btnRun.disabled = false;
+    genStatus.innerHTML = '<span class="ok">✓ SQL generated</span>';
+  } catch(e) {
+    sqlDisplay.className = 'sql-block';
+    sqlDisplay.textContent = '';
+    sqlCard.style.display = 'none';
+    genStatus.innerHTML = `<span class="err">Error: ${e.message}</span>`;
+  } finally {
+    btnGen.disabled = false;
+  }
+}
+
+async function runSQL() {
+  if (!currentSQL) return;
+
+  const runStatus   = document.getElementById('run-status');
+  const resultsCard = document.getElementById('results-card');
+  const resultsTable = document.getElementById('results-table');
+  const resultsCount = document.getElementById('results-count');
+  const btnRun      = document.getElementById('btn-run');
+
+  btnRun.disabled = true;
+  runStatus.innerHTML = '<span style="color:#888">Running…</span>';
+  resultsCard.style.display = 'none';
+
+  try {
+    const res = await fetch(`${API}/api/nl2sql/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql: currentSQL }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    resultsCard.style.display = 'block';
+    resultsCount.textContent = `${data.rows.length} row${data.rows.length !== 1 ? 's' : ''}`;
+
+    if (data.rows.length === 0) {
+      resultsTable.innerHTML = '<span class="empty">No rows returned.</span>';
+    } else {
+      resultsTable.innerHTML = `
+        <table>
+          <thead><tr>${data.columns.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${data.rows.map(row =>
+              `<tr>${row.map(cell =>
+                cell === null || cell === undefined
+                  ? `<td><span class="null-val">null</span></td>`
+                  : `<td>${String(cell).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</td>`
+              ).join('')}</tr>`
+            ).join('')}
+          </tbody>
+        </table>`;
+    }
+    runStatus.innerHTML = '<span class="ok">✓ Done</span>';
+  } catch(e) {
+    runStatus.innerHTML = `<span class="err">Error: ${e.message}</span>`;
+  } finally {
+    btnRun.disabled = false;
+  }
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+
+loadBudgets();
+loadUsage();
+loadTransactions();
+</script>
+</body>
+</html>

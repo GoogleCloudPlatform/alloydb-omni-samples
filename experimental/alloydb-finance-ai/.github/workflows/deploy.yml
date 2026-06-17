@@ -1,0 +1,73 @@
+name: Build, Push to GCR, and Deploy to GKE
+
+on:
+  push:
+    branches: [main]
+
+env:
+  PROJECT_ID: alloydbbd
+  CLUSTER_NAME: alloydb-demo
+  CLUSTER_ZONE: us-central1-a
+  BACKEND_IMAGE: gcr.io/alloydbbd/backend
+  FRONTEND_IMAGE: gcr.io/alloydbbd/frontend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            VITE_API_URL=http://${{ secrets.BACKEND_EXTERNAL_IP }}:8000
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.CLUSTER_ZONE }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Restart backend deployment
+        run: kubectl rollout restart deployment/backend -n app
+
+      - name: Restart frontend deployment
+        run: kubectl rollout restart deployment/frontend -n app
+
+      - name: Wait for rollouts to complete
+        run: |
+          kubectl rollout status deployment/backend -n app --timeout=120s
+          kubectl rollout status deployment/frontend -n app --timeout=120s
