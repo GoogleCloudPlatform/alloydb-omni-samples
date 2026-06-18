@@ -27,7 +27,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from passlib.context import CryptContext
+import bcrypt
 
 from app.ai_analysis import (
     generate_fallback_finance_insight,
@@ -129,7 +129,6 @@ def _embed_text(text: str) -> list[float]:
 # JWT configuration for user session tokens.
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 DEV_USER_EMAIL = "foo@bar.com"
 DEV_USER_PASSWORD = "password"
@@ -211,11 +210,16 @@ async def _seed_transactions_for_user(conn: asyncpg.Connection, user_id: int) ->
         ],
     )
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    pwd_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(pwd_bytes, salt)
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    pwd_bytes = plain_password.encode('utf-8')
+    hashed_bytes = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(pwd_bytes, hashed_bytes)
 
 
 def validate_password(password: str) -> None:
@@ -1615,6 +1619,20 @@ async def _execute_select_sql(sql_query: str, user_id: str | None = None) -> dic
     sql = _rewrite_common_category_aliases(sql_query.strip().rstrip(";"))
     if not sql.upper().startswith("SELECT"):
         raise HTTPException(status_code=422, detail="Only SELECT statements are allowed")
+    
+    # Secure query by blocking references to forbidden tables/functions
+    blacklist = [
+        r"\busers\b",
+        r"\bBudgetPrefs\b",
+        r"\bitems\b",
+        r"\bmonthly_reports\b",
+        r"\bpg_\w+",
+        r"\binformation_schema\b"
+    ]
+    for pattern in blacklist:
+        if re.search(pattern, sql, flags=re.IGNORECASE):
+            raise HTTPException(status_code=403, detail="Query contains forbidden table or function references")
+
     executable_sql = _scope_transactions_sql(sql, user_id) if user_id is not None else sql
     async with pool.acquire() as conn:
         try:
