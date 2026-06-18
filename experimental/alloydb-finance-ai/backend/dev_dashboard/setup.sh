@@ -69,7 +69,7 @@ try:
     if not secret:
         sys.exit(1)
     token = jwt.encode(
-        {"sub": "0", "email": "dev@local", "exp": datetime.now(timezone.utc) + timedelta(days=365)},
+        {"sub": "1", "email": "foo@bar.com", "exp": datetime.now(timezone.utc) + timedelta(days=365)},
         secret,
         algorithm="HS256",
     )

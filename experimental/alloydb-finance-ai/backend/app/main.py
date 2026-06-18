@@ -232,13 +232,14 @@ async def startup():
     global pool
     pool = await asyncpg.create_pool(
         DATABASE_URL,
-        ssl="require" if DATABASE_SSL_MODE == "require" else False,
+        ssl=True if DATABASE_SSL_MODE == "require" else False,
         min_size=5,
         max_size=20,
         command_timeout=60,
         max_inactive_connection_lifetime=300,
     )
     async with pool.acquire() as conn:
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS items (
                 id SERIAL PRIMARY KEY,
@@ -451,12 +452,6 @@ async def startup():
             ALTER TABLE monthly_reports
             ALTER COLUMN totals SET NOT NULL
         """)
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        await conn.execute("""
-            ALTER TABLE transactions
-            ADD COLUMN IF NOT EXISTS embedding vector(768)
-        """)
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await conn.execute("""
             ALTER TABLE transactions
             ADD COLUMN IF NOT EXISTS embedding vector(768)

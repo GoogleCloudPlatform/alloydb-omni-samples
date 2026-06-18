@@ -15,6 +15,9 @@ GOOGLE_CLOUD_CONFIG_PATTERN = re.compile(r"^[A-Za-z0-9._:-]+$")
 GOOGLE_CLOUD_LOCATION_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
 VERTEX_AI_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
+_credentials = None
+_auth_request = None
+
 
 def get_google_cloud_project() -> str:
     project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
@@ -53,13 +56,17 @@ def build_vertex_generate_content_url(*, project: str, location: str, model: str
 
 
 def get_vertex_access_token() -> str:
+    global _credentials, _auth_request
     try:
-        credentials, _ = google.auth.default(scopes=[VERTEX_AI_SCOPE])
-        credentials.refresh(GoogleAuthRequest())
+        if _credentials is None:
+            _credentials, _ = google.auth.default(scopes=[VERTEX_AI_SCOPE])
+            _auth_request = GoogleAuthRequest()
+        if not _credentials.valid:
+            _credentials.refresh(_auth_request)
     except Exception as exc:
         raise RuntimeError("Google ADC credentials not found") from exc
 
-    token = getattr(credentials, "token", None)
+    token = getattr(_credentials, "token", None)
     if not token:
         raise RuntimeError("Google ADC credentials did not return an access token")
     return token

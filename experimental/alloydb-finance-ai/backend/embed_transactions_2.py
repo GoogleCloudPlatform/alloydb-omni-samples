@@ -59,7 +59,7 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
 
 async def embed():
     db_url = os.environ["DATABASE_URL"].replace("host.docker.internal", "localhost")
-    ssl = "require" if "sslmode=require" in db_url else False
+    ssl = True if "sslmode=require" in db_url else False
     conn = await asyncpg.connect(db_url, ssl=ssl)
 
     total = 0

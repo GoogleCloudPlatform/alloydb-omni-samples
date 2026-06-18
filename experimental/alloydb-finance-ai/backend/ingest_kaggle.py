@@ -341,7 +341,7 @@ async def main() -> None:
         row["spending_category"] = info.get("spending_category", "shopping")
 
     # --- 5. Connect to DB, create table, insert --------------------------------
-    ssl = "require" if DATABASE_SSL_MODE == "require" else False
+    ssl = True if DATABASE_SSL_MODE == "require" else False
 
     t0 = time.time()
     conn = await asyncpg.connect(DATABASE_URL, ssl=ssl)
