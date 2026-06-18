@@ -9,56 +9,39 @@ import os
 import asyncpg
 
 DATABASE_URL = os.environ["DATABASE_URL"]
-CONCURRENCY = 1  # number of parallel embedding calls
-
-
-async def embed_one(pool, txn_id, idx, total, counters):
-    try:
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """UPDATE transactions
-                   SET embedding = google_ml.embedding(
-                       'text-embedding-005',
-                       COALESCE(merchant_name, '') || ' ' ||
-                       COALESCE(merchant_category, '') || ' ' ||
-                       COALESCE(spending_category, '') || ' ' ||
-                       COALESCE(description, '')
-                   )::vector
-                   WHERE transaction_id = $1""",
-                txn_id,
-            )
-        counters["updated"] += 1
-        print(f"  [{idx}/{total}] {txn_id} ✓")
-    except Exception as e:
-        counters["failed"] += 1
-        print(f"  [{idx}/{total}] {txn_id} FAILED: {e}")
-
 
 async def main():
-    pool = await asyncpg.create_pool(DATABASE_URL, ssl=False, min_size=1, max_size=CONCURRENCY)
+    pool = await asyncpg.create_pool(DATABASE_URL, ssl=False, min_size=1, max_size=1)
     try:
+        total_updated = 0
+        chunk_size = 100
         async with pool.acquire() as conn:
-            ids = await conn.fetch(
-                "SELECT transaction_id FROM transactions WHERE embedding IS NULL"
-            )
-        total = len(ids)
-        print(f"Found {total} transactions to embed (concurrency={CONCURRENCY}).")
-
-        counters = {"updated": 0, "failed": 0}
-        sem = asyncio.Semaphore(CONCURRENCY)
-
-        async def bounded(txn_id, idx):
-            async with sem:
-                await embed_one(pool, txn_id, idx, total, counters)
-
-        await asyncio.gather(*[
-            bounded(row["transaction_id"], i + 1)
-            for i, row in enumerate(ids)
-        ])
+            while True:
+                res = await conn.execute(
+                    f"""UPDATE transactions
+                       SET embedding = google_ml.embedding(
+                           'text-embedding-005',
+                           COALESCE(merchant_name, '') || ' ' ||
+                           COALESCE(merchant_category, '') || ' ' ||
+                           COALESCE(spending_category, '') || ' ' ||
+                           COALESCE(description, '')
+                       )::vector
+                       WHERE transaction_id IN (
+                           SELECT transaction_id FROM transactions
+                           WHERE embedding IS NULL
+                           LIMIT {chunk_size}
+                       )"""
+                )
+                words = res.split()
+                count = int(words[-1]) if words else 0
+                if count == 0:
+                    break
+                total_updated += count
+                print(f"Updated {count} transactions (Total updated: {total_updated})...")
     finally:
         await pool.close()
 
-    print(f"\nDone. {counters['updated']} updated, {counters['failed']} failed.")
+    print(f"\nDone. {total_updated} updated successfully.")
 
 
 asyncio.run(main())

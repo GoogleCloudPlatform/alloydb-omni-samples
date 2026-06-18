@@ -23,7 +23,7 @@ import asyncpg
 import requests
 import google.auth
 import google.auth.transport.requests
-from fastapi import FastAPI, HTTPException, Query, Depends, Header
+from fastapi import FastAPI, HTTPException, Query, Depends, Header, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -313,11 +313,15 @@ async def startup():
             ALTER TABLE transactions_2 ADD COLUMN IF NOT EXISTS embedding vector(768)
         """)
         await conn.execute("""
+            CREATE INDEX IF NOT EXISTS transactions_2_embedding_idx 
+            ON transactions_2 USING hnsw (embedding vector_cosine_ops)
+        """)
+        await conn.execute("""
             ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id INTEGER
         """)
         await conn.execute("""
             UPDATE transactions
-            SET user_id = (SELECT id FROM users WHERE email = 'nikhil.m@berkeley.edu' LIMIT 1)
+            SET user_id = (SELECT id FROM users WHERE email = 'foo@bar.com' LIMIT 1)
             WHERE user_id IS NULL
         """)
         await conn.execute(
@@ -646,16 +650,16 @@ class ItemUpdate(BaseModel):
 class BudgetCreate(BaseModel):
     """Request body for creating or updating a budget limit."""
     category: SpendingCategory  # validated against the enum; FastAPI returns 422 on invalid value
-    amount: float = Field(..., gt=0)  # spending limit in USD; must be > 0
+    amount: float = Field(..., gt=0, le=1e12)  # spending limit in USD; must be > 0
 
 
 # --- Transaction Models ---
 
 class TransactionCreate(BaseModel):
-    amount: float
+    amount: float = Field(..., gt=0, le=1e12)
     merchant_name: str
     spending_category: str
-    quantity: int = 1
+    quantity: int = Field(default=1, gt=0)
     country: str = "United Kingdom"
     item_description: Optional[str] = None
 
@@ -1085,8 +1089,25 @@ async def delete_item(item_id: int):
 # These endpoints are scoped to the authenticated user and operate only on
 # that user's transaction rows.
 
+async def _async_generate_and_save_embedding(txn_id: uuid.UUID, embed_text: str):
+    try:
+        vec = await run_in_threadpool(_embed_text, embed_text)
+        vec_str = f"[{','.join(str(x) for x in vec)}]"
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE transactions_2 SET embedding = $1::vector WHERE transaction_id = $2",
+                vec_str, txn_id,
+            )
+    except Exception:
+        logger.exception("Failed to generate embedding for transaction %s", txn_id)
+
+
 @app.post("/api/transactions", status_code=201)
-async def create_transaction(txn: TransactionCreate, user: dict = Depends(get_current_user)):
+async def create_transaction(
+    txn: TransactionCreate,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     txn_id = uuid.uuid4()
     ts = datetime.now(timezone.utc)
     item_description = txn.item_description or txn.merchant_name
@@ -1102,16 +1123,7 @@ async def create_transaction(txn: TransactionCreate, user: dict = Depends(get_cu
             txn_id, int(user["user_id"]), ts, txn.amount, txn.merchant_name,
             txn.spending_category, item_description, txn.quantity, txn.country,
         )
-    try:
-        vec = await run_in_threadpool(_embed_text, embed_text)
-        vec_str = f"[{','.join(str(x) for x in vec)}]"
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE transactions_2 SET embedding = $1::vector WHERE transaction_id = $2",
-                vec_str, txn_id,
-            )
-    except Exception:
-        logger.exception("Failed to generate embedding for transaction %s", txn_id)
+    background_tasks.add_task(_async_generate_and_save_embedding, txn_id, embed_text)
     return _serialize_transaction(row)
 
 
@@ -1653,7 +1665,16 @@ def _validate_sql_security(sql: str) -> None:
         r"\bmonthly_reports\b",
         r"\bpg_\w+",
         r"\binformation_schema\b",
-        r"\b\w+_to_xml\b"
+        r"\b\w+_to_xml\b",
+        r"\binsert\b",
+        r"\bupdate\b",
+        r"\bdelete\b",
+        r"\btruncate\b",
+        r"\bdrop\b",
+        r"\balter\b",
+        r"\bcreate\b",
+        r"\bgrant\b",
+        r"\brevoke\b"
     ]
     for pattern in blacklist:
         if re.search(pattern, sql_no_comments, flags=re.IGNORECASE):

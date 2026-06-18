@@ -87,9 +87,7 @@ def route_user_message(
             model=model,
             prompt=prompt,
             temperature=0.1,
-            # Vertex generateContent is stricter than AI Studio about responseSchema
-            # shape; for v1 routing we rely on prompt-constrained JSON output.
-            response_schema=None,
+            response_schema=_router_response_schema(),
         )
     except RuntimeError as e:
         raise CustomerToolRouterError(str(e)) from e
