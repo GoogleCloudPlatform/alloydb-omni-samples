@@ -6,6 +6,7 @@ import time
 import uuid
 import logging
 import asyncio
+import threading
 from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from enum import Enum
@@ -102,15 +103,17 @@ ENABLE_NL2SQL_EXECUTE = os.getenv("ENABLE_NL2SQL_EXECUTE", "false").lower() == "
 
 _adc_creds = None
 _adc_session = None
+_adc_lock = threading.Lock()
 
 def _get_access_token() -> str:
     global _adc_creds, _adc_session
-    if _adc_creds is None:
-        _adc_creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        _adc_session = google.auth.transport.requests.Request()
-    if not _adc_creds.valid:
-        _adc_creds.refresh(_adc_session)
-    return _adc_creds.token
+    with _adc_lock:
+        if _adc_creds is None:
+            _adc_creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            _adc_session = google.auth.transport.requests.Request()
+        if not _adc_creds.valid:
+            _adc_creds.refresh(_adc_session)
+        return _adc_creds.token
 
 def _embed_text(text: str) -> list[float]:
     url = (
@@ -1099,16 +1102,17 @@ async def create_transaction(txn: TransactionCreate, user: dict = Depends(get_cu
             txn_id, int(user["user_id"]), ts, txn.amount, txn.merchant_name,
             txn.spending_category, item_description, txn.quantity, txn.country,
         )
-        try:
-            vec = await run_in_threadpool(_embed_text, embed_text)
-            vec_str = f"[{','.join(str(x) for x in vec)}]"
+    try:
+        vec = await run_in_threadpool(_embed_text, embed_text)
+        vec_str = f"[{','.join(str(x) for x in vec)}]"
+        async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE transactions_2 SET embedding = $1::vector WHERE transaction_id = $2",
                 vec_str, txn_id,
             )
-        except Exception:
-            logger.exception("Failed to generate embedding for transaction %s", txn_id)
-        return _serialize_transaction(row)
+    except Exception:
+        logger.exception("Failed to generate embedding for transaction %s", txn_id)
+    return _serialize_transaction(row)
 
 
 @app.get("/api/transactions/categories")
@@ -1645,7 +1649,8 @@ def _validate_sql_security(sql: str) -> None:
         r"\bitems\b",
         r"\bmonthly_reports\b",
         r"\bpg_\w+",
-        r"\binformation_schema\b"
+        r"\binformation_schema\b",
+        r"\b\w+_to_xml\b"
     ]
     for pattern in blacklist:
         if re.search(pattern, cleaned_sql, flags=re.IGNORECASE):
@@ -1758,7 +1763,8 @@ async def customer_route_tool(
     t_e2e = time.perf_counter()
     try:
         t_route = time.perf_counter()
-        out = route_user_message(
+        out = await run_in_threadpool(
+            route_user_message,
             req.message.strip(),
             project_id=GOOGLE_CLOUD_PROJECT,
             location=GOOGLE_CLOUD_LOCATION,
@@ -1796,7 +1802,8 @@ async def customer_ask(
     t_e2e = time.perf_counter()
     try:
         t_route = time.perf_counter()
-        out = route_user_message(
+        out = await run_in_threadpool(
+            route_user_message,
             req.message.strip(),
             project_id=GOOGLE_CLOUD_PROJECT,
             location=GOOGLE_CLOUD_LOCATION,

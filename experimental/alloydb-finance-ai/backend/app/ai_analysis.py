@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import threading
 from typing import Any
 
 import google.auth
@@ -17,6 +18,7 @@ VERTEX_AI_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 _credentials = None
 _auth_request = None
+_credentials_lock = threading.Lock()
 
 
 def get_google_cloud_project() -> str:
@@ -57,19 +59,20 @@ def build_vertex_generate_content_url(*, project: str, location: str, model: str
 
 def get_vertex_access_token() -> str:
     global _credentials, _auth_request
-    try:
-        if _credentials is None:
-            _credentials, _ = google.auth.default(scopes=[VERTEX_AI_SCOPE])
-            _auth_request = GoogleAuthRequest()
-        if not _credentials.valid:
-            _credentials.refresh(_auth_request)
-    except Exception as exc:
-        raise RuntimeError("Google ADC credentials not found") from exc
+    with _credentials_lock:
+        try:
+            if _credentials is None:
+                _credentials, _ = google.auth.default(scopes=[VERTEX_AI_SCOPE])
+                _auth_request = GoogleAuthRequest()
+            if not _credentials.valid:
+                _credentials.refresh(_auth_request)
+        except Exception as exc:
+            raise RuntimeError("Google ADC credentials not found") from exc
 
-    token = getattr(_credentials, "token", None)
-    if not token:
-        raise RuntimeError("Google ADC credentials did not return an access token")
-    return token
+        token = getattr(_credentials, "token", None)
+        if not token:
+            raise RuntimeError("Google ADC credentials did not return an access token")
+        return token
 
 
 def post_vertex_generate_content(
