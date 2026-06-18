@@ -137,19 +137,21 @@ DEV_USER_PASSWORD = "password"
 # We only need this file when a user logs in for the first time.
 SEED_TRANSACTIONS_FILE = Path(__file__).resolve().parents[1] / "synthetic-data" / "output_data" / "transactions.csv"
 _cached_seed_transactions: list[dict] = []
+_seed_lock = asyncio.Lock()
 
 # Connection pool for the PostgreSQL/AlloyDB database.
 pool: asyncpg.Pool = None
 
-def _load_seed_transactions() -> list[dict]:
+async def _load_seed_transactions() -> list[dict]:
     """Read the seed CSV once and cache it for use by subsequent users.
 
     This function converts the CSV rows into Python dicts with typed
     values so they can be inserted into the database directly.
     """
     global _cached_seed_transactions
-    if _cached_seed_transactions:
-        return _cached_seed_transactions
+    async with _seed_lock:
+        if _cached_seed_transactions:
+            return _cached_seed_transactions
 
     if not SEED_TRANSACTIONS_FILE.exists():
         return []
@@ -180,7 +182,7 @@ async def _seed_transactions_for_user(conn: asyncpg.Connection, user_id: int) ->
     # transactions_2 is the active table; no seeding needed
     return
 
-    seed_rows = _load_seed_transactions()
+    seed_rows = await _load_seed_transactions()
     if not seed_rows:
         return
 
@@ -1615,12 +1617,28 @@ def _scope_transactions_sql(sql: str, user_id: str) -> str:
     return f"{scoped_transactions_cte} {normalized_sql}"
 
 
-async def _execute_select_sql(sql_query: str, user_id: str | None = None) -> dict:
-    sql = _rewrite_common_category_aliases(sql_query.strip().rstrip(";"))
-    if not sql.upper().startswith("SELECT"):
-        raise HTTPException(status_code=422, detail="Only SELECT statements are allowed")
+def _validate_sql_security(sql: str) -> None:
+    # 1. Check for unicode escapes (U&'...' or U&"...")
+    if re.search(r"\bu&[\'\"]", sql, flags=re.IGNORECASE):
+        raise HTTPException(status_code=403, detail="Query contains forbidden Unicode escape characters")
+
+    # 2. Strip comments and replace string literals to safely check for semicolons and forbidden tables
+    pattern = r'("(?:[^"\\]|\\.)*")|(\'(?:[^\'\\]|\\.)*\')|(/\*[\s\S]*?\*/)|(--.*)'
     
-    # Secure query by blocking references to forbidden tables/functions
+    def replace(match):
+        if match.group(1):
+            return '"str"'
+        elif match.group(2):
+            return "'str'"
+        return ""
+        
+    cleaned_sql = re.sub(pattern, replace, sql)
+    
+    # 3. Check for multiple statements
+    if ";" in cleaned_sql.strip().rstrip(";"):
+        raise HTTPException(status_code=403, detail="Multiple SQL statements are not allowed")
+
+    # 4. Check against blacklist of forbidden tables/functions on the cleaned_sql structure
     blacklist = [
         r"\busers\b",
         r"\bBudgetPrefs\b",
@@ -1630,8 +1648,17 @@ async def _execute_select_sql(sql_query: str, user_id: str | None = None) -> dic
         r"\binformation_schema\b"
     ]
     for pattern in blacklist:
-        if re.search(pattern, sql, flags=re.IGNORECASE):
+        if re.search(pattern, cleaned_sql, flags=re.IGNORECASE):
             raise HTTPException(status_code=403, detail="Query contains forbidden table or function references")
+
+
+async def _execute_select_sql(sql_query: str, user_id: str | None = None) -> dict:
+    sql = _rewrite_common_category_aliases(sql_query.strip().rstrip(";"))
+    if not sql.upper().startswith("SELECT"):
+        raise HTTPException(status_code=422, detail="Only SELECT statements are allowed")
+    
+    # Secure query by validating comments, statements, escapes and blacklist
+    _validate_sql_security(sql)
 
     executable_sql = _scope_transactions_sql(sql, user_id) if user_id is not None else sql
     async with pool.acquire() as conn:
