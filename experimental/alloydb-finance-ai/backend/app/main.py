@@ -1615,7 +1615,13 @@ def _scope_transactions_sql(sql: str, user_id: str) -> str:
         f"SELECT * FROM public.transactions_2 WHERE user_id = {safe_user_id} AND amount < 10000"
         ")"
     )
-    normalized_sql = re.sub(r"\btransactions\b", "transactions_2", normalized_sql, flags=re.IGNORECASE)
+    # Safe replacement to avoid modifying the keyword inside single or double quoted string literals
+    sub_pattern = r"(\'(?:[^\'\\]|\\.)*\')|(\"(?:[^\"\\]|\\.)*\")|(\btransactions\b)"
+    def _replace_txn(match):
+        if match.group(3):
+            return "transactions_2"
+        return match.group(0)
+    normalized_sql = re.sub(sub_pattern, _replace_txn, normalized_sql, flags=re.IGNORECASE)
     if re.match(r"^\s*WITH\b", normalized_sql, flags=re.IGNORECASE):
         return re.sub(r"^\s*WITH\s+", f"{scoped_transactions_cte}, ", normalized_sql, count=1, flags=re.IGNORECASE)
     return f"{scoped_transactions_cte} {normalized_sql}"
@@ -1653,12 +1659,14 @@ def _validate_sql_security(sql: str) -> None:
         if re.search(pattern, sql_no_comments, flags=re.IGNORECASE):
             raise HTTPException(status_code=403, detail="Query contains forbidden table or function references")
 
-    # 4. To safely check for semicolons, replace string literals and double-quoted identifiers with placeholders
-    pattern = r'("(?:[^"\\]|\\.)*")|(\'(?:[^\'\\]|\\.)*\')'
+    # 4. To safely check for semicolons, replace string literals, double-quoted identifiers, and dollar-quoted strings with placeholders
+    pattern = r'("(?:[^"\\]|\\.)*")|(\'(?:[^\'\\]|\\.)*\')|(\$\$.*?\$\$)'
     def replace_placeholders(match):
         if match.group(1):
             return '"ident"'
-        return "'str'"
+        if match.group(2):
+            return "'str'"
+        return "'dollar_str'"
     
     cleaned_sql = re.sub(pattern, replace_placeholders, sql_no_comments)
 
@@ -1670,8 +1678,8 @@ def _validate_sql_security(sql: str) -> None:
 async def _execute_select_sql(sql_query: str, user_id: str | None = None) -> dict:
     sql = _rewrite_common_category_aliases(sql_query.strip().rstrip(";"))
     cleaned_sql = _remove_comments(sql).strip()
-    if not cleaned_sql.upper().startswith("SELECT"):
-        raise HTTPException(status_code=422, detail="Only SELECT statements are allowed")
+    if not (cleaned_sql.upper().startswith("SELECT") or cleaned_sql.upper().startswith("WITH")):
+        raise HTTPException(status_code=422, detail="Only SELECT or WITH statements are allowed")
     
     # Secure query by validating comments, statements, escapes and blacklist
     _validate_sql_security(sql)
@@ -2171,21 +2179,21 @@ async def _generate_monthly_report_payload(
 
     async with pool.acquire() as conn:
         spend_row = await conn.fetchrow(
-            """SELECT COALESCE(SUM(amount), 0) AS total_spent
+            """SELECT COALESCE(SUM(ABS(amount)), 0) AS total_spent
                FROM transactions_2
                WHERE user_id = $1
-                 AND amount > 0
-                 AND amount < 10000
+                 AND spending_category != 'income'
+                 AND ABS(amount) < 10000
                  AND timestamp >= $2
                  AND timestamp < $3""",
             user_id, month_start, month_end,
         )
         category_rows_raw = await conn.fetch(
-            """SELECT spending_category AS category, COALESCE(SUM(amount), 0) AS total_spent
+            """SELECT spending_category AS category, COALESCE(SUM(ABS(amount)), 0) AS total_spent
                FROM transactions_2
                WHERE user_id = $1
-                 AND amount > 0
-                 AND amount < 10000
+                 AND spending_category != 'income'
+                 AND ABS(amount) < 10000
                  AND timestamp >= $2
                  AND timestamp < $3
                GROUP BY spending_category
@@ -2194,11 +2202,11 @@ async def _generate_monthly_report_payload(
             user_id, month_start, month_end,
         )
         merchant_rows_raw = await conn.fetch(
-            """SELECT merchant_name, COALESCE(SUM(amount), 0) AS total_spent, COUNT(*) AS transaction_count
+            """SELECT merchant_name, COALESCE(SUM(ABS(amount)), 0) AS total_spent, COUNT(*) AS transaction_count
                FROM transactions_2
                WHERE user_id = $1
-                 AND amount > 0
-                 AND amount < 10000
+                 AND spending_category != 'income'
+                 AND ABS(amount) < 10000
                  AND timestamp >= $2
                  AND timestamp < $3
                GROUP BY merchant_name
