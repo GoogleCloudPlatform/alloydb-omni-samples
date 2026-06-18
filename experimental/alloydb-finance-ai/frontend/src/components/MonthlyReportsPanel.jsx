@@ -217,6 +217,13 @@ export default function MonthlyReportsPanel() {
     const maxWidth = 180;
     let y = 20;
 
+    const ensureSpace = (height) => {
+      if (y + height > 280) {
+        doc.addPage();
+        y = 20;
+      }
+    };
+
     doc.setFontSize(18);
     doc.text(`AlloyFinance Monthly Report — ${formatMonth(selectedReport.year_month)}`, left, y);
     y += 10;
@@ -228,6 +235,7 @@ export default function MonthlyReportsPanel() {
     y += 10;
 
     if (selectedReport.headline) {
+      ensureSpace(20);
       doc.setFontSize(13);
       doc.setFont(undefined, "bold");
       doc.text("Key Takeaway", left, y);
@@ -235,10 +243,12 @@ export default function MonthlyReportsPanel() {
       doc.setFont(undefined, "normal");
       doc.setFontSize(11);
       const hLines = doc.splitTextToSize(selectedReport.headline, maxWidth);
+      ensureSpace(hLines.length * 6);
       doc.text(hLines, left, y);
       y += hLines.length * 6 + 6;
     }
 
+    ensureSpace(20);
     doc.setFontSize(13);
     doc.setFont(undefined, "bold");
     doc.text("Summary", left, y);
@@ -246,9 +256,11 @@ export default function MonthlyReportsPanel() {
     doc.setFont(undefined, "normal");
     doc.setFontSize(11);
     const commentsLines = doc.splitTextToSize(selectedReport.comments || "", maxWidth);
+    ensureSpace(commentsLines.length * 6);
     doc.text(commentsLines, left, y);
     y += commentsLines.length * 6 + 6;
 
+    ensureSpace(20);
     doc.setFontSize(13);
     doc.setFont(undefined, "bold");
     doc.text("Action Items", left, y);
@@ -258,6 +270,7 @@ export default function MonthlyReportsPanel() {
     (selectedReport.suggestions || []).forEach((s, idx) => {
       const label = `${idx + 1}. ${s.title}${s.estimated_savings_usd > 0 ? ` — save ~${formatMoney(s.estimated_savings_usd)}/mo` : ""}`;
       const lines = doc.splitTextToSize(label, maxWidth);
+      ensureSpace(lines.length * 6 + (s.rationale ? 15 : 0));
       doc.text(lines, left, y);
       y += lines.length * 6;
       if (s.rationale) {
@@ -267,7 +280,7 @@ export default function MonthlyReportsPanel() {
       }
     });
 
-    y += 4;
+    ensureSpace(25);
     doc.setFontSize(13);
     doc.setFont(undefined, "bold");
     doc.text("Spending by Category", left, y);
@@ -275,6 +288,7 @@ export default function MonthlyReportsPanel() {
     doc.setFont(undefined, "normal");
     doc.setFontSize(11);
     (selectedReport.category_breakdown || []).slice(0, 8).forEach((row) => {
+      ensureSpace(6);
       doc.text(`${row.category}: ${formatMoney(row.total_spent)}`, left, y);
       y += 6;
     });

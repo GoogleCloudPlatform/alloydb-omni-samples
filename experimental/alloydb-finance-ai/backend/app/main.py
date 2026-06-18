@@ -1616,9 +1616,19 @@ def _scope_transactions_sql(sql: str, user_id: str) -> str:
         ")"
     )
     normalized_sql = re.sub(r"\btransactions\b", "transactions_2", normalized_sql, flags=re.IGNORECASE)
-    if normalized_sql.lstrip().upper().startswith("WITH "):
+    if re.match(r"^\s*WITH\b", normalized_sql, flags=re.IGNORECASE):
         return re.sub(r"^\s*WITH\s+", f"{scoped_transactions_cte}, ", normalized_sql, count=1, flags=re.IGNORECASE)
     return f"{scoped_transactions_cte} {normalized_sql}"
+
+
+def _remove_comments(sql: str) -> str:
+    # Safely strip SQL comments, preserving single-quoted string literals intact
+    pattern = r"(\'(?:[^\'\\]|\\.)*\')|(/\*[\s\S]*?\*/)|(--.*)"
+    def replace(match):
+        if match.group(1):
+            return match.group(1)
+        return " "
+    return re.sub(pattern, replace, sql)
 
 
 def _validate_sql_security(sql: str) -> None:
@@ -1626,23 +1636,10 @@ def _validate_sql_security(sql: str) -> None:
     if re.search(r"\bu&[\'\"]", sql, flags=re.IGNORECASE):
         raise HTTPException(status_code=403, detail="Query contains forbidden Unicode escape characters")
 
-    # 2. Strip comments and replace string literals to safely check for semicolons and forbidden tables
-    pattern = r'("(?:[^"\\]|\\.)*")|(\'(?:[^\'\\]|\\.)*\')|(/\*[\s\S]*?\*/)|(--.*)'
-    
-    def replace(match):
-        if match.group(1):
-            return '"str"'
-        elif match.group(2):
-            return "'str'"
-        return ""
-        
-    cleaned_sql = re.sub(pattern, replace, sql)
-    
-    # 3. Check for multiple statements
-    if ";" in cleaned_sql.strip().rstrip(";"):
-        raise HTTPException(status_code=403, detail="Multiple SQL statements are not allowed")
+    # 2. Remove comments first
+    sql_no_comments = _remove_comments(sql)
 
-    # 4. Check against blacklist of forbidden tables/functions on the cleaned_sql structure
+    # 3. Check against blacklist of forbidden tables/functions on the comment-free SQL
     blacklist = [
         r"\busers\b",
         r"\bBudgetPrefs\b",
@@ -1653,19 +1650,33 @@ def _validate_sql_security(sql: str) -> None:
         r"\b\w+_to_xml\b"
     ]
     for pattern in blacklist:
-        if re.search(pattern, cleaned_sql, flags=re.IGNORECASE):
+        if re.search(pattern, sql_no_comments, flags=re.IGNORECASE):
             raise HTTPException(status_code=403, detail="Query contains forbidden table or function references")
+
+    # 4. To safely check for semicolons, replace string literals and double-quoted identifiers with placeholders
+    pattern = r'("(?:[^"\\]|\\.)*")|(\'(?:[^\'\\]|\\.)*\')'
+    def replace_placeholders(match):
+        if match.group(1):
+            return '"ident"'
+        return "'str'"
+    
+    cleaned_sql = re.sub(pattern, replace_placeholders, sql_no_comments)
+
+    # 5. Check for multiple statements
+    if ";" in cleaned_sql.strip().rstrip(";"):
+        raise HTTPException(status_code=403, detail="Multiple SQL statements are not allowed")
 
 
 async def _execute_select_sql(sql_query: str, user_id: str | None = None) -> dict:
     sql = _rewrite_common_category_aliases(sql_query.strip().rstrip(";"))
-    if not sql.upper().startswith("SELECT"):
+    cleaned_sql = _remove_comments(sql).strip()
+    if not cleaned_sql.upper().startswith("SELECT"):
         raise HTTPException(status_code=422, detail="Only SELECT statements are allowed")
     
     # Secure query by validating comments, statements, escapes and blacklist
     _validate_sql_security(sql)
 
-    executable_sql = _scope_transactions_sql(sql, user_id) if user_id is not None else sql
+    executable_sql = _scope_transactions_sql(cleaned_sql, user_id) if user_id is not None else cleaned_sql
     async with pool.acquire() as conn:
         try:
             rows = await conn.fetch(f"SELECT * FROM ({executable_sql}) _q LIMIT {ROW_LIMIT + 1}")
