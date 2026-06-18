@@ -40,7 +40,15 @@ function asArray(value) {
 }
 
 function normalizeSuggestion(item) {
-  if (item && typeof item === "object" && item.title) return item;
+  if (item && typeof item === "object" && item.title) {
+    return {
+      title: item.title,
+      rationale: item.rationale || "",
+      estimated_savings_usd: Number(item.estimated_savings_usd || 0),
+      difficulty: item.difficulty || "",
+      impact: item.impact || "",
+    };
+  }
   const text = typeof item === "string" ? item : String(item ?? "");
   return { title: text, rationale: "", estimated_savings_usd: 0, difficulty: "", impact: "" };
 }

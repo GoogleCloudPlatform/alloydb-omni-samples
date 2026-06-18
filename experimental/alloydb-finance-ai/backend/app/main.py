@@ -630,6 +630,7 @@ class SpendingCategory(str, Enum):
     beauty      = "beauty"
     toys        = "toys"
     stationery  = "stationery"
+    income      = "income"
 
 
 # --- Item Models ---
@@ -976,7 +977,7 @@ async def _fetch_transactions_in_window(conn, user_id: int, start_dt, end_dt):
     if start_dt and end_dt:
         return await conn.fetch(
             """SELECT transaction_id, timestamp, amount, merchant_name, spending_category,
-                      quantity, country, item_description AS description, embedding
+                      quantity, country, item_description AS description, embedding::text AS embedding
                FROM transactions_2
                WHERE user_id = $1 AND embedding IS NOT NULL
                  AND amount < 10000
@@ -987,7 +988,7 @@ async def _fetch_transactions_in_window(conn, user_id: int, start_dt, end_dt):
     elif start_dt:
         return await conn.fetch(
             """SELECT transaction_id, timestamp, amount, merchant_name, spending_category,
-                      quantity, country, item_description AS description, embedding
+                      quantity, country, item_description AS description, embedding::text AS embedding
                FROM transactions_2
                WHERE user_id = $1 AND embedding IS NOT NULL
                  AND amount < 10000
@@ -998,7 +999,7 @@ async def _fetch_transactions_in_window(conn, user_id: int, start_dt, end_dt):
     else:
         return await conn.fetch(
             """SELECT transaction_id, timestamp, amount, merchant_name, spending_category,
-                      quantity, country, item_description AS description, embedding
+                      quantity, country, item_description AS description, embedding::text AS embedding
                FROM transactions_2
                WHERE user_id = $1 AND embedding IS NOT NULL
                  AND amount < 10000
@@ -1640,11 +1641,11 @@ def _scope_transactions_sql(sql: str, user_id: str) -> str:
 
 
 def _remove_comments(sql: str) -> str:
-    # Safely strip SQL comments, preserving single-quoted string literals intact
-    pattern = r"(\'(?:[^\'\\]|\\.)*\')|(/\*[\s\S]*?\*/)|(--.*)"
+    # Safely strip SQL comments, preserving single-quoted string literals, double-quoted identifiers, and dollar-quoted strings intact
+    pattern = r"(\'(?:[^\'\\]|\\.)*\')|(\"(?:[^\"\\]|\\.)*\")|(\$\$.*?\$\$)|(/\*[\s\S]*?\*/)|(--.*)"
     def replace(match):
-        if match.group(1):
-            return match.group(1)
+        if match.group(1) or match.group(2) or match.group(3):
+            return match.group(0)
         return " "
     return re.sub(pattern, replace, sql)
 
@@ -1752,8 +1753,9 @@ async def _semantic_search_core(
     emb_text = _pgvector_literal_from_embedding_text(emb_row["emb"])
     t_vec = time.perf_counter()
     rows = await conn.fetch(
-        """SELECT *, item_description AS description,
-               1 - (embedding <=> $1::text::vector) AS similarity
+        """SELECT transaction_id, user_id, timestamp, amount, merchant_name, spending_category,
+                  quantity, country, item_description AS description,
+                  1 - (embedding <=> $1::text::vector) AS similarity
            FROM transactions_2
            WHERE user_id = $2
              AND embedding IS NOT NULL
