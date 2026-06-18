@@ -50,6 +50,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             VITE_API_URL=http://${{ secrets.BACKEND_EXTERNAL_IP }}:8000
+            VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           tags: |
             ${{ env.FRONTEND_IMAGE }}:latest
             ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}

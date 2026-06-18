@@ -98,6 +98,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "").strip() or "gemini-2.0-flash"
 GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
 GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1").strip()
+ENABLE_NL2SQL_EXECUTE = os.getenv("ENABLE_NL2SQL_EXECUTE", "false").lower() == "true"
 
 _adc_creds = None
 _adc_session = None
@@ -321,11 +322,24 @@ async def startup():
             "Dev User",
             None,
         )
-        # Budget preferences: one row per category, amount is the user's spending limit
+        # Check if the table "BudgetPrefs" has a column user_id
+        has_user_id = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name='BudgetPrefs' AND column_name='user_id'
+            )
+        """)
+        if not has_user_id:
+            await conn.execute('DROP TABLE IF EXISTS "BudgetPrefs"')
+
+        # Budget preferences: one row per category per user
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS "BudgetPrefs" (
-                category TEXT PRIMARY KEY,
-                amount   NUMERIC(18, 2) NOT NULL
+                user_id  INTEGER NOT NULL REFERENCES users(id),
+                category TEXT NOT NULL,
+                amount   NUMERIC(18, 2) NOT NULL,
+                PRIMARY KEY (user_id, category)
             )
         """)
         await conn.execute("""
@@ -628,7 +642,7 @@ class ItemUpdate(BaseModel):
 class BudgetCreate(BaseModel):
     """Request body for creating or updating a budget limit."""
     category: SpendingCategory  # validated against the enum; FastAPI returns 422 on invalid value
-    amount: float               # spending limit in USD; must be > 0
+    amount: float = Field(..., gt=0)  # spending limit in USD; must be > 0
 
 
 # --- Transaction Models ---
@@ -1085,7 +1099,7 @@ async def create_transaction(txn: TransactionCreate, user: dict = Depends(get_cu
             txn.spending_category, item_description, txn.quantity, txn.country,
         )
         try:
-            vec = _embed_text(embed_text)
+            vec = await run_in_threadpool(_embed_text, embed_text)
             vec_str = f"[{','.join(str(x) for x in vec)}]"
             await conn.execute(
                 "UPDATE transactions_2 SET embedding = $1::vector WHERE transaction_id = $2",
@@ -1187,7 +1201,7 @@ async def search_transactions(
 ):
     """Semantic similarity search over the authenticated user's transactions."""
     try:
-        vec = _embed_text(q.strip())
+        vec = await run_in_threadpool(_embed_text, q.strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding query failed: {e}")
     vec_str = f"[{','.join(str(x) for x in vec)}]"
@@ -1337,7 +1351,7 @@ async def semantic_filter_transactions(
     start_dt, end_dt, tr_label = _resolve_time_range(time_range, start_date, end_date)
 
     try:
-        vec = _embed_text(concept)
+        vec = await run_in_threadpool(_embed_text, concept)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding query failed: {e}")
     vec_str = f"[{','.join(str(x) for x in vec)}]"
@@ -1420,7 +1434,7 @@ async def fetch_all_transactions(user: dict = Depends(get_current_user)):
 # Budget operations let the user create or update spending limits by category.
 
 @app.post("/api/budgets", status_code=200)
-async def create_budget(budget: BudgetCreate):
+async def create_budget(budget: BudgetCreate, user: dict = Depends(get_current_user)):
     """
     Set (or update) a monthly spending limit for a category.
 
@@ -1430,26 +1444,24 @@ async def create_budget(budget: BudgetCreate):
     Returns {"status": 0} on success.
     If the same category already has a budget, the amount is overwritten (upsert).
     """
-    # Reject non-positive amounts — a budget of $0 or negative makes no sense
-    if budget.amount <= 0:
-        raise HTTPException(status_code=422, detail="Amount must be greater than 0")
+    # Amount is validated strictly positive by Pydantic Field(gt=0)
 
     try:
         async with pool.acquire() as conn:
-            # INSERT or UPDATE: category is the primary key, so duplicate calls
+            # INSERT or UPDATE: (user_id, category) is the primary key, so duplicate calls
             # for the same category simply update the stored amount instead of erroring
             await conn.execute(
-                """INSERT INTO "BudgetPrefs" (category, amount)
-                   VALUES ($1, $2)
-                   ON CONFLICT (category) DO UPDATE SET amount = EXCLUDED.amount""",
+                """INSERT INTO "BudgetPrefs" (user_id, category, amount)
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT (user_id, category) DO UPDATE SET amount = EXCLUDED.amount""",
+                int(user["user_id"]),
                 budget.category.value,
                 budget.amount,
             )
         return {"status": 0}
     except Exception as e:
-        # Log the full error server-side; return a generic failure code to the caller
-        print(f"[ERROR] create_budget: {e}")
-        return JSONResponse(status_code=500, content={"status": 1, "error": str(e)})
+        logger.exception("Failed to create budget")
+        return JSONResponse(status_code=500, content={"status": 1, "error": "Internal server error"})
 
 
 # --- NL2SQL Models ---
@@ -1587,8 +1599,10 @@ ROW_LIMIT = 200
 
 def _scope_transactions_sql(sql: str, user_id: str) -> str:
     safe_user_id = int(user_id)
-    normalized_sql = re.sub(r"\bpublic\.transactions_2\b", "transactions_2", sql, flags=re.IGNORECASE)
-    normalized_sql = re.sub(r"\bpublic\.transactions\b", "transactions_2", normalized_sql, flags=re.IGNORECASE)
+    normalized_sql = re.sub(r"\bpublic\s*\.\s*\"?transactions_2\b\"?", "transactions_2", sql, flags=re.IGNORECASE)
+    normalized_sql = re.sub(r"\bpublic\s*\.\s*\"?transactions\b\"?", "transactions_2", normalized_sql, flags=re.IGNORECASE)
+    normalized_sql = re.sub(r"\"transactions_2\"", "transactions_2", normalized_sql, flags=re.IGNORECASE)
+    normalized_sql = re.sub(r"\"transactions\"", "transactions_2", normalized_sql, flags=re.IGNORECASE)
     if re.search(r"^\s*WITH\s+transactions_2\s+AS\s*\(", normalized_sql, flags=re.IGNORECASE):
         raise HTTPException(status_code=422, detail="Generated query could not be safely scoped")
     scoped_transactions_cte = (
@@ -1887,6 +1901,8 @@ async def customer_ask(
 @app.post("/api/nl2sql/execute")
 async def nl2sql_execute(req: NL2SQLExecuteRequest, user: dict = Depends(get_current_user)):
     """Execute a SQL query (SELECT only) and return columns + rows (capped at ROW_LIMIT)."""
+    if not ENABLE_NL2SQL_EXECUTE:
+        raise HTTPException(status_code=403, detail="Arbitrary SQL execution is disabled")
     t0 = time.perf_counter()
     out = await _execute_select_sql(req.sql, user_id=user["user_id"])
     exec_ms = monotonic_ms(t0)
@@ -1955,7 +1971,7 @@ async def ai_analysis_nl2sql(req: AIAnalysisNL2SQLRequest, user: dict = Depends(
     }
 
 @app.get("/api/budgets/usage")
-async def fetch_budget_usage():
+async def fetch_budget_usage(user: dict = Depends(get_current_user)):
     """
     Return spending vs. budget limit for every category the user has configured.
 
@@ -1983,10 +1999,13 @@ async def fetch_budget_usage():
             LEFT JOIN transactions_2 t
                 ON LOWER(t.spending_category) = LOWER(bp.category)
                AND t.timestamp >= $1
+               AND t.user_id = bp.user_id
+            WHERE bp.user_id = $2
             GROUP BY bp.category, bp.amount
             ORDER BY bp.category
             """,
             month_start,
+            int(user["user_id"]),
         )
 
     # Convert NUMERIC fields to float for JSON serialisation
@@ -2143,7 +2162,8 @@ async def _generate_monthly_report_payload(
             }
             for r in merchant_rows_raw
         ]
-        comments, headline, suggestions, watch_items, gem_ms, gem_bytes = _generate_monthly_llm_comments(
+        comments, headline, suggestions, watch_items, gem_ms, gem_bytes = await run_in_threadpool(
+            _generate_monthly_llm_comments,
             year_month, total_spent, category_rows, merchant_rows
         )
 

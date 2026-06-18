@@ -190,6 +190,8 @@ def _enrich_all(descriptions: list[str], tl: TimingLogger) -> dict[str, dict]:
         for attempt in range(3):
             try:
                 results = _gemini_enrich(batch)
+                if not isinstance(results, list) or len(results) != len(batch):
+                    raise ValueError(f"Mismatched response length: expected {len(batch)}, got {len(results) if isinstance(results, list) else 'non-list'}")
                 for desc, res in zip(batch, results):
                     lookup[desc] = {
                         "merchant_name": res.get("merchant_name", "General Retailer"),

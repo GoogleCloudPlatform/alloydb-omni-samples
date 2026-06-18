@@ -34,19 +34,26 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
     )
     body = {"instances": [{"content": t} for t in texts]}
     for attempt in range(5):
-        resp = requests.post(
-            url,
-            json=body,
-            headers={"Authorization": f"Bearer {_get_token()}", "Content-Type": "application/json"},
-            timeout=120,
-        )
-        if resp.status_code == 429:
-            wait = 30 * (attempt + 1)
-            print(f"  Rate limited, waiting {wait}s (attempt {attempt + 1}/5)...", flush=True)
+        try:
+            resp = requests.post(
+                url,
+                json=body,
+                headers={"Authorization": f"Bearer {_get_token()}", "Content-Type": "application/json"},
+                timeout=120,
+            )
+            if resp.status_code == 429:
+                wait = 30 * (attempt + 1)
+                print(f"  Rate limited, waiting {wait}s (attempt {attempt + 1}/5)...", flush=True)
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return [p["embeddings"]["values"] for p in resp.json()["predictions"]]
+        except (requests.RequestException, Exception) as e:
+            if attempt == 4:
+                raise
+            wait = 10 * (attempt + 1)
+            print(f"  Request failed ({e}), retrying in {wait}s...", flush=True)
             time.sleep(wait)
-            continue
-        resp.raise_for_status()
-        return [p["embeddings"]["values"] for p in resp.json()["predictions"]]
     raise RuntimeError("Vertex AI rate limit: all 5 attempts failed")
 
 

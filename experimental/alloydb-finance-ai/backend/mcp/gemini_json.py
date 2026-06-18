@@ -13,6 +13,9 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 
 logger = logging.getLogger(__name__)
 
+_credentials = None
+_auth_request = None
+
 
 def generate_json(
     *,
@@ -51,10 +54,14 @@ def generate_json(
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": generation_config,
     }
+    global _credentials, _auth_request
     try:
-        credentials, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        credentials.refresh(GoogleAuthRequest())
-        token = credentials.token
+        if _credentials is None:
+            _credentials, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            _auth_request = GoogleAuthRequest()
+        if not _credentials.valid:
+            _credentials.refresh(_auth_request)
+        token = _credentials.token
     except DefaultCredentialsError as e:
         raise RuntimeError(
             "Google ADC credentials not found. Run `gcloud auth application-default login` "
