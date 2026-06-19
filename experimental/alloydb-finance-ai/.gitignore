@@ -1,0 +1,54 @@
+
+# Node
+**/node_modules/
+
+# Python virtual environments (any depth)
+**/venv/
+**/.venv/
+**/env/
+**/.env/
+**/ENV/
+**/VENV/
+
+# Python bytecode / cache
+**/__pycache__/
+**/*.py[cod]
+
+# Local environment files
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+
+# virtual env
+.venv/
+
+# binaries
+synthetic-data/alloydb-auth-proxy*
+
+# frontend deps
+node_modules/
+frontend/dist/
+.DS_Store
+__pycache__/
+*.pyc
+
+# Presentation / local docs
+presentation_data/
+
+# Persisted performance metrics (CSV on disk)
+backend/app/data/*.csv
+
+# Kubernetes secrets
+*-secret.yaml
+*-secret.yml
+*.secret.yaml
+*.secret.yml
+secrets/
+k8s/secrets/
+k8s/secrets.yaml
+
+
+backend/transaction_data.csv

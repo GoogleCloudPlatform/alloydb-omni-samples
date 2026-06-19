@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# virtual env
+.venv/
+
+# binaries
+synthetic-data/alloydb-auth-proxy*
+
+# frontend deps
+node_modules/
