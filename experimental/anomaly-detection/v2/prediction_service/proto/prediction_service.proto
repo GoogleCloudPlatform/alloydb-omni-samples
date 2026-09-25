@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package experimental.anomaly_detection.v2.prediction.proto;
+
+import "v2/common/proto/anomaly_finding_entry.proto";
+import "v2/common/proto/audit_log_entry.proto";
+import "v2/common/proto/model.proto";
+
+option go_package = "github.com/GoogleCloudPlatform/alloydb-omni-samples/experimental/anomaly-detection/v2/prediction_service/proto;predictionpb";
+
+// Service for predicting anomalies.
+service PredictionService {
+  // Lists all available models.
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+
+  // Predicts anomaly status and confidence score for audit log entries.
+  rpc Predict(PredictRequest) returns (PredictResponse);
+
+  // Pushes a new model to the prediction service.
+  rpc PushModel(PushModelRequest) returns (PushModelResponse);
+}
+
+message ModelMetadataFilter {
+  // Optional. Exact match for trainer version.
+  string trainer_version = 1;
+}
+
+message ModelFilter {
+  // Optional. Filter by model metadata.
+  ModelMetadataFilter metadata_filter = 1;
+
+  // Optional. Filter models by scenario training config.
+  oneof scenario_config_filter {
+    experimental.anomaly_detection.v2.common.proto
+        .TrafficDeviationTrainingConfig traffic_deviation = 2;
+    experimental.anomaly_detection.v2.common.proto
+        .VolumetricSpikeTrainingConfig volumetric_spike = 3;
+    experimental.anomaly_detection.v2.common.proto
+        .TemporalDeviationTrainingConfig temporal_deviation = 4;
+  }
+}
+
+message ListModelsRequest {
+  // Optional. Find the model at the specified location.
+  string model_location = 1;
+
+  // Optional. Filter models used for listing.
+  ModelFilter filter = 2;
+}
+
+message ModelEntry {
+  string model_location = 1;
+  experimental.anomaly_detection.v2.common.proto.ModelMetadata
+      metadata = 3;
+
+  oneof training_config {
+    experimental.anomaly_detection.v2.common.proto
+        .TrafficDeviationTrainingConfig traffic_deviation_config = 4;
+    experimental.anomaly_detection.v2.common.proto
+        .VolumetricSpikeTrainingConfig volumetric_spike_config = 5;
+    experimental.anomaly_detection.v2.common.proto
+        .TemporalDeviationTrainingConfig temporal_deviation_config = 6;
+  }
+}
+
+message ListModelsResponse {
+  repeated ModelEntry models = 1;
+}
+
+message AuditLogBatch {
+  repeated experimental.anomaly_detection.v2.common.proto.AuditLogEntry
+      log_entries = 1;
+}
+
+// Request payload for anomaly prediction.
+// Supports real-time (single/batch) and offline (file-based) inputs.
+message PredictRequest {
+  oneof payload {
+    experimental.anomaly_detection.v2.common.proto.AuditLogEntry
+        single_log = 1;
+    AuditLogBatch batch_logs = 2;
+    string predict_log_path = 3;
+  }
+
+  // Optional. Find the model at the specified location.
+  string model_location = 4;
+
+  // Optional. Filter models used for prediction.
+  ModelFilter filter = 5;
+}
+
+message AnomalyFindingBatch {
+  repeated experimental.anomaly_detection.v2.common.proto.AnomalyFinding
+      findings = 1;
+}
+
+// Structured findings from anomaly prediction.
+message PredictResponse {
+  oneof result {
+    experimental.anomaly_detection.v2.common.proto.AnomalyFinding
+        single_finding = 1;
+    AnomalyFindingBatch batch_findings = 2;
+    string findings_path = 3;
+  }
+}
+
+message PushModelRequest {
+  string model_location = 1;
+  experimental.anomaly_detection.v2.common.proto.Model model = 2;
+}
+
+message PushModelResponse {}

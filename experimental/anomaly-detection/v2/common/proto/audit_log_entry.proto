@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package experimental.anomaly_detection.v2.common.proto;
+
+option go_package = "github.com/GoogleCloudPlatform/alloydb-omni-samples/experimental/anomaly-detection/v2/common/proto;commonpb";
+
+// Represents an audit log entry, used both for synthetic data generation
+// and for log ingestion by the anomaly detection service application.
+message AuditLogEntry {
+  string normalized_query_template = 1;
+
+  string query_statement = 2;
+
+  string db_user = 3;
+
+  string db_name = 4;
+
+  // Ground truth label (true: anomalous, false: normal).
+  // Optional for live logs sent to the service application.
+  bool is_ground_truth_anomalous = 5;
+
+  // Query execution timestamp.
+  int64 timestamp_ms = 6;
+}
