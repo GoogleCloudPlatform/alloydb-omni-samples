@@ -20,7 +20,7 @@ func SampleQueryCount(cfg *cfgpb.BucketQueryTemplateConfig, isSpike bool, curren
 	rate := bCfg.GetQueriesPerBucketMean()
 
 	isWeekend := (currentWeekday == time.Saturday || currentWeekday == time.Sunday)
-	hasWeekendMult := bCfg.HasWeekendTrafficMultiplier()
+	hasWeekendMult := bCfg.WeekendTrafficMultiplier != nil
 	weekendMult := bCfg.GetWeekendTrafficMultiplier()
 	isSilentWeekend := isWeekend && hasWeekendMult && weekendMult == 0.0
 

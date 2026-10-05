@@ -47,17 +47,17 @@ func validatePredictRequest(req *predictionpb.PredictRequest) error {
 	if req == nil {
 		return errors.New("request is nil")
 	}
-	switch req.WhichPayload() {
-	case predictionpb.PredictRequest_SingleLog_case:
-		if req.GetSingleLog() == nil {
+	switch p := req.GetPayload().(type) {
+	case *predictionpb.PredictRequest_SingleLog:
+		if p.SingleLog == nil {
 			return errors.New("single_log cannot be nil")
 		}
-	case predictionpb.PredictRequest_BatchLogs_case:
-		if req.GetBatchLogs() == nil || len(req.GetBatchLogs().GetLogEntries()) == 0 {
+	case *predictionpb.PredictRequest_BatchLogs:
+		if p.BatchLogs == nil || len(p.BatchLogs.GetLogEntries()) == 0 {
 			return errors.New("batch_logs must contain at least one log entry")
 		}
-	case predictionpb.PredictRequest_PredictLogPath_case:
-		if req.GetPredictLogPath() == "" {
+	case *predictionpb.PredictRequest_PredictLogPath:
+		if p.PredictLogPath == "" {
 			return errors.New("predict_log_path cannot be empty")
 		}
 	default:
@@ -152,8 +152,9 @@ func (s *predictionServer) ListModels(ctx context.Context, req *predictionpb.Lis
 		entries = append(entries, item.entry)
 	}
 
-	resp := &predictionpb.ListModelsResponse{}
-	resp.SetModels(entries)
+	resp := &predictionpb.ListModelsResponse{
+		Models: entries,
+	}
 	return resp, nil
 }
 
@@ -170,32 +171,32 @@ func matchesModelFilter(filter *predictionpb.ModelFilter, entry *predictionpb.Mo
 	}
 
 	// 2. Scenario config filter
-	switch filter.WhichScenarioConfigFilter() {
-	case predictionpb.ModelFilter_TrafficDeviation_case:
+	switch f := filter.GetScenarioConfigFilter().(type) {
+	case *predictionpb.ModelFilter_TrafficDeviation:
 		cfg := entry.GetTrafficDeviationConfig()
 		if cfg == nil {
 			return false
 		}
-		if filter := filter.GetTrafficDeviation(); filter.GetAnomalyThresholdRatio() != 0 {
-			return cfg.GetAnomalyThresholdRatio() == filter.GetAnomalyThresholdRatio()
+		if f.TrafficDeviation.GetAnomalyThresholdRatio() != 0 {
+			return cfg.GetAnomalyThresholdRatio() == f.TrafficDeviation.GetAnomalyThresholdRatio()
 		}
 
-	case predictionpb.ModelFilter_VolumetricSpike_case:
+	case *predictionpb.ModelFilter_VolumetricSpike:
 		cfg := entry.GetVolumetricSpikeConfig()
 		if cfg == nil {
 			return false
 		}
-		if filter := filter.GetVolumetricSpike(); filter.GetStdDevMultiplier() != 0 {
-			return cfg.GetStdDevMultiplier() == filter.GetStdDevMultiplier()
+		if f.VolumetricSpike.GetStdDevMultiplier() != 0 {
+			return cfg.GetStdDevMultiplier() == f.VolumetricSpike.GetStdDevMultiplier()
 		}
 
-	case predictionpb.ModelFilter_TemporalDeviation_case:
+	case *predictionpb.ModelFilter_TemporalDeviation:
 		cfg := entry.GetTemporalDeviationConfig()
 		if cfg == nil {
 			return false
 		}
-		if filter := filter.GetTemporalDeviation(); filter.GetSilentThresholdRatio() != 0 {
-			return cfg.GetSilentThresholdRatio() == filter.GetSilentThresholdRatio()
+		if f.TemporalDeviation.GetSilentThresholdRatio() != 0 {
+			return cfg.GetSilentThresholdRatio() == f.TemporalDeviation.GetSilentThresholdRatio()
 		}
 	}
 
@@ -265,17 +266,24 @@ func collectModels(ctx context.Context, paths []string, filter *predictionpb.Mod
 }
 
 func buildModelEntry(path string, modelProto *modelpb.Model) *predictionpb.ModelEntry {
-	entry := &predictionpb.ModelEntry{}
-	entry.SetModelLocation(path)
-	entry.SetMetadata(modelProto.GetMetadata())
+	entry := &predictionpb.ModelEntry{
+		ModelLocation: path,
+		Metadata:      modelProto.GetMetadata(),
+	}
 
-	switch modelProto.WhichScenario() {
-	case modelpb.Model_TrafficDeviation_case:
-		entry.SetTrafficDeviationConfig(modelProto.GetTrafficDeviation().GetConfig())
-	case modelpb.Model_VolumetricSpike_case:
-		entry.SetVolumetricSpikeConfig(modelProto.GetVolumetricSpike().GetConfig())
-	case modelpb.Model_TemporalDeviation_case:
-		entry.SetTemporalDeviationConfig(modelProto.GetTemporalDeviation().GetConfig())
+	switch s := modelProto.GetScenario().(type) {
+	case *modelpb.Model_TrafficDeviation:
+		entry.TrainingConfig = &predictionpb.ModelEntry_TrafficDeviationConfig{
+			TrafficDeviationConfig: s.TrafficDeviation.GetConfig(),
+		}
+	case *modelpb.Model_VolumetricSpike:
+		entry.TrainingConfig = &predictionpb.ModelEntry_VolumetricSpikeConfig{
+			VolumetricSpikeConfig: s.VolumetricSpike.GetConfig(),
+		}
+	case *modelpb.Model_TemporalDeviation:
+		entry.TrainingConfig = &predictionpb.ModelEntry_TemporalDeviationConfig{
+			TemporalDeviationConfig: s.TemporalDeviation.GetConfig(),
+		}
 	}
 
 	return entry
@@ -308,18 +316,18 @@ func modelFromProto(pb *modelpb.Model) (service.Model, error) {
 	if pb == nil {
 		return nil, fmt.Errorf("model proto is nil")
 	}
-	switch pb.WhichScenario() {
-	case modelpb.Model_TrafficDeviation_case:
+	switch s := pb.GetScenario().(type) {
+	case *modelpb.Model_TrafficDeviation:
 		return service.NewTrafficDeviationModel(pb)
 
-	case modelpb.Model_VolumetricSpike_case:
+	case *modelpb.Model_VolumetricSpike:
 		return service.NewVolumetricSpikeModel(pb)
 
-	case modelpb.Model_TemporalDeviation_case:
+	case *modelpb.Model_TemporalDeviation:
 		return service.NewTemporalDeviationModel(pb)
 
 	default:
-		return nil, fmt.Errorf("unknown scenario case in proto: %v", pb.WhichScenario())
+		return nil, fmt.Errorf("unknown scenario case in proto: %T", s)
 	}
 }
 
@@ -344,19 +352,24 @@ func resetModels(models []service.Model) {
 }
 
 func predictSingle(ctx context.Context, models []service.Model, singleLog *auditpb.AuditLogEntry) (*predictionpb.PredictResponse, error) {
-	resp := &predictionpb.PredictResponse{}
 	if len(models) == 1 {
-		resp.SetSingleFinding(models[0].Predict(singleLog))
-		return resp, nil
+		return &predictionpb.PredictResponse{
+			Result: &predictionpb.PredictResponse_SingleFinding{
+				SingleFinding: models[0].Predict(singleLog),
+			},
+		}, nil
 	}
 	var findings []*findingpb.AnomalyFinding
 	for _, m := range models {
 		findings = append(findings, m.Predict(singleLog))
 	}
-	batchResp := &predictionpb.AnomalyFindingBatch{}
-	batchResp.SetFindings(findings)
-	resp.SetBatchFindings(batchResp)
-	return resp, nil
+	return &predictionpb.PredictResponse{
+		Result: &predictionpb.PredictResponse_BatchFindings{
+			BatchFindings: &predictionpb.AnomalyFindingBatch{
+				Findings: findings,
+			},
+		},
+	}, nil
 }
 
 func predictBatch(ctx context.Context, models []service.Model, batchLogs *predictionpb.AuditLogBatch) (*predictionpb.PredictResponse, error) {
@@ -368,11 +381,13 @@ func predictBatch(ctx context.Context, models []service.Model, batchLogs *predic
 			findings = append(findings, m.Predict(entry))
 		}
 	}
-	batchResp := &predictionpb.AnomalyFindingBatch{}
-	batchResp.SetFindings(findings)
-	resp := &predictionpb.PredictResponse{}
-	resp.SetBatchFindings(batchResp)
-	return resp, nil
+	return &predictionpb.PredictResponse{
+		Result: &predictionpb.PredictResponse_BatchFindings{
+			BatchFindings: &predictionpb.AnomalyFindingBatch{
+				Findings: findings,
+			},
+		},
+	}, nil
 }
 
 func predictFile(ctx context.Context, models []service.Model, path string) (*predictionpb.PredictResponse, error) {
@@ -409,9 +424,11 @@ func predictFile(ctx context.Context, models []service.Model, path string) (*pre
 		}
 	}
 
-	resp := &predictionpb.PredictResponse{}
-	resp.SetFindingsPath(outPath)
-	return resp, nil
+	return &predictionpb.PredictResponse{
+		Result: &predictionpb.PredictResponse_FindingsPath{
+			FindingsPath: outPath,
+		},
+	}, nil
 }
 
 func main() {

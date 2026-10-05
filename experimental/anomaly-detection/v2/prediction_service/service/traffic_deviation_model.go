@@ -36,8 +36,8 @@ func NewTrafficDeviationModel(pb *modelpb.Model) (*TrafficDeviationModel, error)
 	}
 
 	// If the pb has no traffic deviation scenario, an error is returned.
-	if !pb.HasTrafficDeviation() {
-		return nil, fmt.Errorf("invalid model scenario: expected TrafficDeviation, got %v", pb.WhichScenario())
+	if pb.GetTrafficDeviation() == nil {
+		return nil, fmt.Errorf("invalid model scenario: expected TrafficDeviation, got %T", pb.GetScenario())
 	}
 
 	// If the pb has valid traffic deviation model data, a new deep copy model is created.
@@ -75,15 +75,16 @@ func (m *TrafficDeviationModel) Predict(logEntry *auditpb.AuditLogEntry) *findin
 }
 
 func generateAnomalyFinding(logEntry *auditpb.AuditLogEntry, isAnomaly bool, confidenceScore float64) *findingpb.AnomalyFinding {
-	finding := &findingpb.AnomalyFinding{}
 	if logEntry == nil {
-		return finding
+		return &findingpb.AnomalyFinding{}
 	}
-	finding.SetDbUser(logEntry.GetDbUser())
-	finding.SetDbName(logEntry.GetDbName())
-	finding.SetQueryStatement(logEntry.GetQueryStatement())
-	finding.SetNormalizedQueryTemplate(logEntry.GetNormalizedQueryTemplate())
-	finding.SetIsAnomalousPredict(isAnomaly)
-	finding.SetConfidenceScore(confidenceScore)
-	return finding
+	return &findingpb.AnomalyFinding{
+		TimestampMs:             logEntry.GetTimestampMs(),
+		DbUser:                  logEntry.GetDbUser(),
+		DbName:                  logEntry.GetDbName(),
+		QueryStatement:          logEntry.GetQueryStatement(),
+		NormalizedQueryTemplate: logEntry.GetNormalizedQueryTemplate(),
+		IsAnomalousPredict:      isAnomaly,
+		ConfidenceScore:         confidenceScore,
+	}
 }

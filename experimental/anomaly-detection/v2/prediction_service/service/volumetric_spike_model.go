@@ -46,8 +46,8 @@ func NewVolumetricSpikeModel(pb *modelpb.Model) (*VolumetricSpikeModel, error) {
 	}
 
 	// If the pb has no volumetric spike scenario, an error is returned.
-	if !pb.HasVolumetricSpike() {
-		return nil, fmt.Errorf("invalid model scenario: expected VolumetricSpike, got %v", pb.WhichScenario())
+	if pb.GetVolumetricSpike() == nil {
+		return nil, fmt.Errorf("invalid model scenario: expected VolumetricSpike, got %T", pb.GetScenario())
 	}
 
 	// If the pb has valid volumetric spike model data, a new deep copy model is created.

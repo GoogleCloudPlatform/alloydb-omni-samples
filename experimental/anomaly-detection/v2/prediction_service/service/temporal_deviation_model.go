@@ -36,8 +36,8 @@ func NewTemporalDeviationModel(pb *modelpb.Model) (*TemporalDeviationModel, erro
 	}
 
 	// If the pb has no temporal deviation scenario, an error is returned.
-	if !pb.HasTemporalDeviation() {
-		return nil, fmt.Errorf("invalid model scenario: expected TemporalDeviation, got %v", pb.WhichScenario())
+	if pb.GetTemporalDeviation() == nil {
+		return nil, fmt.Errorf("invalid model scenario: expected TemporalDeviation, got %T", pb.GetScenario())
 	}
 
 	// If the pb has valid temporal deviation model data, a new deep copy model is created.

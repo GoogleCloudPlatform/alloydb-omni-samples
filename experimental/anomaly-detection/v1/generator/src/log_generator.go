@@ -31,12 +31,13 @@ func NewLogGenerator(rng *rand.Rand) *LogGenerator {
 func (g *LogGenerator) GenerateLog(cfg *genpb.WeightedQueryTemplateConfig, writer io.Writer) error {
 	statement := g.buildQueryStatement(cfg.GetTemplate())
 
-	entry := &genpb.AuditLogEntry{}
-	entry.SetNormalizedQueryTemplate(cfg.GetTemplate().GetNormalizedQueryTemplate())
-	entry.SetQueryStatement(statement)
-	entry.SetDbUser(constUser)
-	entry.SetDbName(constDbName)
-	entry.SetIsGroundTruthAnomalous(cfg.GetTemplate().GetIsGroundTruthAnomalous())
+	entry := &genpb.AuditLogEntry{
+		NormalizedQueryTemplate: cfg.GetTemplate().GetNormalizedQueryTemplate(),
+		QueryStatement:          statement,
+		DbUser:                  constUser,
+		DbName:                  constDbName,
+		IsGroundTruthAnomalous:  cfg.GetTemplate().GetIsGroundTruthAnomalous(),
+	}
 
 	_, err := protodelim.MarshalTo(writer, entry)
 	return err
@@ -45,20 +46,19 @@ func (g *LogGenerator) GenerateLog(cfg *genpb.WeightedQueryTemplateConfig, write
 // BuildBucketLog constructs an AuditLogEntry protobuf with custom timestamp and anomaly label.
 func (g *LogGenerator) BuildBucketLog(cfg *genpb.BucketQueryTemplateConfig, isSpike bool, timestampMs int64) *genpb.AuditLogEntry {
 	statement := g.buildQueryStatement(cfg.GetTemplate())
-	entry := &genpb.AuditLogEntry{}
-	entry.SetNormalizedQueryTemplate(cfg.GetTemplate().GetNormalizedQueryTemplate())
-	entry.SetQueryStatement(statement)
-
 	dbUser := cfg.GetBucketConfig().GetDbUser()
 	if dbUser == "" {
 		dbUser = constUser
 	}
-	entry.SetDbUser(dbUser)
-	entry.SetDbName(constDbName)
-	entry.SetIsGroundTruthAnomalous(isSpike)
-	entry.SetTimestampMs(timestampMs)
 
-	return entry
+	return &genpb.AuditLogEntry{
+		NormalizedQueryTemplate: cfg.GetTemplate().GetNormalizedQueryTemplate(),
+		QueryStatement:          statement,
+		DbUser:                  dbUser,
+		DbName:                  constDbName,
+		IsGroundTruthAnomalous:  isSpike,
+		TimestampMs:             timestampMs,
+	}
 }
 
 // buildQueryStatement injects randomized values into placeholders (%v) to create the query statement.
