@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package experimental.anomaly_detection.v2.common.proto;
+
+option go_package = "github.com/GoogleCloudPlatform/alloydb-omni-samples/experimental/anomaly-detection/v2/common/proto;commonpb";
+
+// Represents the structural finding output by the anomaly detection service.
+message AnomalyFinding {
+  int64 timestamp_ms = 1;
+  string db_user = 2;
+  string db_name = 3;
+  string query_statement = 4;
+  string normalized_query_template = 5;
+
+  // Predict anomaly status for human review and model performance measurement.
+  bool is_anomalous_predict = 6;
+
+  // Measure ML model's level of certainty in its prediction.
+  double confidence_score = 7;
+}

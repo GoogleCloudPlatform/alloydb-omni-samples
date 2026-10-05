@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package experimental.anomaly_detection.v1.generator.proto;
+
+option go_package = "github.com/GoogleCloudPlatform/alloydb-omni-samples/experimental/anomaly-detection/v1/generator/proto;generatorpb";
+
+// Query template configuration schema for synthetic data generation tool.
+message QueryTemplateConfigs {
+  oneof scenario {
+    WeightedSamplingConfig weighted_sampling = 1;
+    BucketSamplingConfig bucket_sampling = 2;
+  }
+}
+
+message WeightedSamplingConfig {
+  repeated WeightedQueryTemplateConfig query_template_configs = 1;
+}
+
+message BucketSamplingConfig {
+  repeated BucketQueryTemplateConfig query_template_configs = 1;
+}
+
+message WeightedQueryTemplateConfig {
+  QueryTemplateConfig template = 1;
+
+  // Relative weight for random sampling, governing the distribution between
+  // normal and anomalous traffic.
+  double probability_weight = 2;
+}
+
+message BucketQueryTemplateConfig {
+  QueryTemplateConfig template = 1;
+  BucketSimulationConfig bucket_config = 2;
+}
+
+message QueryTemplateConfig {
+  // "SELECT * FROM my_table WHERE field1 = %v AND field2 = %v"
+  string normalized_query_template = 1;
+
+  // Define value-generation constraints specific to each placeholder.
+  message PlaceholderValueSpec {
+    message IntegerPlaceholder {
+      int32 min = 1;
+      int32 max = 2;
+    }
+
+    message FloatPlaceholder {
+      double min = 1;
+      double max = 2;
+    }
+
+    message StringPlaceholder {
+      repeated string allowed_values = 1;
+    }
+
+    // Type-specific constraint specification.
+    oneof placeholder {
+      IntegerPlaceholder int_placeholder = 1;
+      FloatPlaceholder float_placeholder = 2;
+      StringPlaceholder string_placeholder = 3;
+    }
+  }
+
+  repeated PlaceholderValueSpec placeholder_values = 2;
+
+  // Ground truth label (true: anomalous, false: normal) used to evaluate
+  // performance of unsupervised anomaly detection models.
+  bool is_ground_truth_anomalous = 4;
+}
+
+message BucketSimulationConfig {
+  string db_user = 1;
+
+  // Baseline traffic simulation.
+  double queries_per_bucket_mean = 2;
+  double queries_variation_std_dev = 3;
+
+  // Anomalous spike
+  double anomalous_spike_probability = 4;
+  double anomalous_spike_multiplier = 5;
+
+  // false: Uniform distribution
+  // true: Spiky/jittered distribution
+  bool spiky_timestamps_distribution = 6;
+
+  // Regular peak to simulate traffic variations in a day.
+  repeated PeakWindow peak_windows = 7;
+
+  // 0.0 represents a silent weekend (e.g., offices/clinics).
+  // > 1.0 represents a busy weekend (e.g., restaurants/stores).
+  optional double weekend_traffic_multiplier = 8;
+}
+
+message PeakWindow {
+  string window_name = 1;  // "day", "night" or custom values
+  int32 hour_start = 2;
+  int32 hour_end = 3;
+  double multiplier = 4;
+}

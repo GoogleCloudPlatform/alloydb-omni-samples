@@ -1,0 +1,71 @@
+# proto-file: experimental/anomaly-detection/v1/generator/proto/query_template_config.proto
+# proto-message: QueryTemplateConfigs
+
+weighted_sampling {
+  query_template_configs {
+    template {
+      normalized_query_template: "SELECT * FROM users WHERE id = %v"
+      placeholder_values {
+        int_placeholder {
+          min: 1
+          max: 100000
+        }
+      }
+      is_ground_truth_anomalous: false
+    }
+    probability_weight: 0.50
+  }
+  query_template_configs {
+    template {
+      normalized_query_template: "INSERT INTO orders (user_id, amount) VALUES (%v, %v)"
+      placeholder_values {
+        int_placeholder {
+          min: 1
+          max: 100000
+        }
+      }
+      placeholder_values {
+        float_placeholder {
+          min: 1.0
+          max: 500.0
+        }
+      }
+      is_ground_truth_anomalous: false
+    }
+    probability_weight: 0.30
+  }
+  query_template_configs {
+    template {
+      normalized_query_template: "UPDATE profiles SET status = '%v' WHERE id = %v"
+      placeholder_values {
+        string_placeholder {
+          allowed_values: "active"
+          allowed_values: "inactive"
+          allowed_values: "pending"
+        }
+      }
+      placeholder_values {
+        int_placeholder {
+          min: 1
+          max: 100000
+        }
+      }
+      is_ground_truth_anomalous: false
+    }
+    probability_weight: 0.16
+  }
+  query_template_configs {
+    template {
+      normalized_query_template: "DROP TABLE users"
+      is_ground_truth_anomalous: true
+    }
+    probability_weight: 0.03
+  }
+  query_template_configs {
+    template {
+      normalized_query_template: "GRANT superuser TO attacker"
+      is_ground_truth_anomalous: true
+    }
+    probability_weight: 0.01
+  }
+}

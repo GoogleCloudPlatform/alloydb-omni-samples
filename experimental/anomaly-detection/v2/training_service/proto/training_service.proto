@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package experimental.anomaly_detection.v2.training.proto;
+
+import "v2/common/proto/model.proto";
+
+option go_package = "github.com/GoogleCloudPlatform/alloydb-omni-samples/experimental/anomaly-detection/v2/training_service/proto;trainingpb";
+
+// Service for training anomaly detection models.
+service TrainingService {
+  // Trains one or more anomaly models based on the logs and provided configs.
+  // Saves the models to the specified location and pushes them to the
+  // prediction service.
+  rpc TrainModels(TrainModelsRequest) returns (TrainModelsResponse);
+}
+
+// Configuration for a model trainer.
+message ModelTrainingConfig {
+  oneof config {
+    experimental.anomaly_detection.v2.common.proto
+        .TrafficDeviationTrainingConfig traffic_deviation_config = 1;
+    experimental.anomaly_detection.v2.common.proto
+        .VolumetricSpikeTrainingConfig volumetric_spike_config = 2;
+    experimental.anomaly_detection.v2.common.proto
+        .TemporalDeviationTrainingConfig temporal_deviation_config = 3;
+  }
+}
+
+message TrainModelsRequest {
+  // Path to the shared training log file.
+  string train_log_path = 1;
+
+  // Support training multiple models in a single pass.
+  repeated ModelTrainingConfig training_configs = 2;
+}
+
+// Result for a single trained model.
+message TrainedModelResult {
+  string model_location = 1;
+  experimental.anomaly_detection.v2.common.proto.ModelMetadata
+      metadata = 2;
+}
+
+message TrainModelsResponse {
+  repeated TrainedModelResult results = 1;
+  string training_summary = 2;
+}

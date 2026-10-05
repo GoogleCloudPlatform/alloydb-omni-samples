@@ -1,0 +1,48 @@
+# proto-file: experimental/anomaly-detection/v1/generator/proto/query_template_config.proto
+# proto-message: QueryTemplateConfigs
+
+bucket_sampling {
+  query_template_configs {
+    template {
+      normalized_query_template: "SELECT * FROM users WHERE id = %v"
+      placeholder_values {
+        int_placeholder {
+          min: 1
+          max: 100000
+        }
+      }
+    }
+    bucket_config {
+      queries_per_bucket_mean: 40.0
+      queries_variation_std_dev: 15.0
+
+      # 0.0 represents a silent weekend (e.g., offices/clinics).
+      # > 1.0 represents a busy weekend (e.g., restaurants/stores).
+      weekend_traffic_multiplier: 0.0
+
+      spiky_timestamps_distribution: true
+
+      anomalous_spike_probability: 0.05
+      anomalous_spike_multiplier: 4.0
+
+      peak_windows {
+        window_name: "morning_peak"
+        hour_start: 9
+        hour_end: 12
+        multiplier: 50.0
+      }
+      peak_windows {
+        window_name: "afternoon_peak"
+        hour_start: 13
+        hour_end: 17
+        multiplier: 50.0
+      }
+      peak_windows {
+        window_name: "night"
+        hour_start: 19
+        hour_end: 22
+        multiplier: 25.0
+      }
+    }
+  }
+}
