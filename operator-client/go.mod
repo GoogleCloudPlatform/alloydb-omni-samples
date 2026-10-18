@@ -1,4 +1,4 @@
-module github.com/GoogleCloudPlatform/alloydb-omni-samples/adbo
+module github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client
 
 go 1.27.1
 

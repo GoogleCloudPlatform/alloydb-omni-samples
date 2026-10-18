@@ -1,3 +1,2 @@
-bin/
-*.yaml
-!samples/**/*.yaml
+/bin/
+/adbo
