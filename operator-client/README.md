@@ -14,6 +14,12 @@ go build -o bin/adbo ./cmd/adbo
 ./bin/adbo --help
 ```
 
+Release builds stamp the version that `adbo version` prints:
+
+```bash
+go build -ldflags "-X github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/version.Version=v0.1.0" -o bin/adbo ./cmd/adbo
+```
+
 ## How to add a command
 
 Do **not** register verbs in `root.go`. That file only attaches group commands (`cluster`, `backup`) so parallel PRs do not collide.
