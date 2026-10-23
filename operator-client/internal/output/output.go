@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"text/tabwriter"
 
@@ -27,7 +28,7 @@ type Table struct {
 // Print writes table (default), JSON, or YAML. A nil raw value prints as []
 // so scripts never see a JSON null.
 func Print(out io.Writer, format string, table Table, raw any) error {
-	if raw == nil {
+	if v := reflect.ValueOf(raw); !v.IsValid() || (v.Kind() == reflect.Slice && v.IsNil()) {
 		raw = []any{}
 	}
 	switch format {

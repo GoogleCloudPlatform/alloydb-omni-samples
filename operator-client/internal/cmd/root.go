@@ -7,11 +7,12 @@
 //	    opts.ClusterName(args)
 //	    opts.Clients()
 //	    c.In(k8s.SomeGVR).Get/List/Create/Patch
+//	    ctx, cancel := opts.WithTimeout(cmd.Context()); defer cancel()  // waiters only
+//	    return c.FormatErr(err)  // translate StatusError
 //	    output.Print(...)
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 )
 
 // NewRootCommand builds the adbo command tree and registers global flags.
-// Add new groups with root.AddCommand(newXxxCommand(opts)).
+// Groups live in cluster.go / backup.go. Do not add verbs here.
 func NewRootCommand() *cobra.Command {
 	// Default cobra only runs the nearest PersistentPreRunE. Traverse so
 	// root still validates -o / --timeout when a child adds its own hook.
@@ -37,11 +38,11 @@ func NewRootCommand() *cobra.Command {
 	opts.KubeFlags.ClusterName = nil
 	opts.KubeFlags.Timeout = nil
 
-	var cancel context.CancelFunc
 	root := &cobra.Command{
-		Use:          "adbo",
-		Short:        "Manage AlloyDB Omni clusters on Kubernetes",
-		SilenceUsage: true,
+		Use:           "adbo",
+		Short:         "Manage AlloyDB Omni clusters on Kubernetes",
+		SilenceUsage:  true,
+		SilenceErrors: true, // main prints via k8s.Format so messages stay consistent
 		// Runnable so --help prints flags even before subcommands land.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
@@ -56,25 +57,18 @@ func NewRootCommand() *cobra.Command {
 			if opts.Timeout <= 0 {
 				return fmt.Errorf("--timeout must be greater than 0")
 			}
-			var ctx context.Context
-			ctx, cancel = context.WithTimeout(cmd.Context(), opts.Timeout)
-			cmd.SetContext(ctx)
 			return nil
-		},
-		PersistentPostRun: func(cmd *cobra.Command, args []string) {
-			if cancel != nil {
-				cancel()
-			}
 		},
 	}
 
 	opts.KubeFlags.AddFlags(root.PersistentFlags())
-	root.PersistentFlags().DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "how long to wait for operations (e.g. 10m, 1h)")
+	root.PersistentFlags().DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "max wait for async operations that use --wait (does not limit connect/logs)")
 	root.PersistentFlags().StringVarP(&opts.Output, "output", "o", output.OutputTable, "output format: table, json or yaml")
 	root.PersistentFlags().BoolVarP(&opts.Yes, "yes", "y", false, "skip confirmation prompts")
 
 	root.AddCommand(
-		// newBackupCommand(opts),
+		newClusterCommand(opts),
+		newBackupCommand(opts),
 	)
 
 	return root

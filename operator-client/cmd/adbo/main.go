@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/cmd"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 )
 
 func main() {
@@ -22,6 +24,7 @@ func main() {
 	err := cmd.NewRootCommand().ExecuteContext(ctx)
 	stop()
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", k8s.Format(err, "", ""))
 		os.Exit(1)
 	}
 }

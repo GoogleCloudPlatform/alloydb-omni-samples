@@ -32,7 +32,7 @@ func TestRootHelpListsFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"--timeout", "--output", "--namespace", "--yes"} {
+	for _, want := range []string{"--timeout", "--output", "--namespace", "--yes", "cluster", "backup"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help missing %s:\n%s", want, out)
 		}

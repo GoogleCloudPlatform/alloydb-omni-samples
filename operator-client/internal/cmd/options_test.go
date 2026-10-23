@@ -1,7 +1,13 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 )
@@ -38,5 +44,41 @@ func TestClusterName(t *testing.T) {
 	}
 	if _, err := (&GlobalOptions{}).ClusterName(nil); err == nil {
 		t.Fatal("empty ClusterName should fail")
+	}
+}
+
+func TestWithTimeout(t *testing.T) {
+	ctx, cancel := (&GlobalOptions{Timeout: 10 * time.Millisecond}).WithTimeout(context.Background())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > 50*time.Millisecond {
+		t.Fatal("expected a short deadline")
+	}
+
+	plain, stop := (&GlobalOptions{}).WithTimeout(context.Background())
+	defer stop()
+	if _, ok := plain.Deadline(); ok {
+		t.Fatal("Timeout <= 0 must not set a deadline")
+	}
+}
+
+func TestConfirm(t *testing.T) {
+	cmd := func(in string) *cobra.Command {
+		c := &cobra.Command{}
+		c.SetIn(strings.NewReader(in))
+		c.SetErr(&bytes.Buffer{})
+		return c
+	}
+	ok, err := (&GlobalOptions{Yes: true}).Confirm(cmd(""), "Delete?")
+	if err != nil || !ok {
+		t.Fatalf("-y: got %v, %v", ok, err)
+	}
+	ok, err = (&GlobalOptions{}).Confirm(cmd("yes\n"), "Delete?")
+	if err != nil || !ok {
+		t.Fatalf("yes: got %v, %v", ok, err)
+	}
+	ok, err = (&GlobalOptions{}).Confirm(cmd("\n"), "Delete?")
+	if err != nil || ok {
+		t.Fatalf("empty: got %v, %v", ok, err)
 	}
 }
