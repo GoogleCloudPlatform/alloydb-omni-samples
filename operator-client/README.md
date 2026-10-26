@@ -16,7 +16,7 @@ go build -o bin/adbo ./cmd/adbo
 
 ## How to add a command
 
-Do **not** register verbs in `root.go`. That file only attaches group commands (`cluster`, `backup`) so parallel PRs do not collide.
+Register `<group>_<verb>` commands on their **group** command (`cluster.go`, `backup.go`), not in `root.go`, so parallel PRs do not collide. Top-level commands from the spec (`status`, `connect`, `logs`, `restore`, `failover`, `switchover`, `doctor`, `version`) are the only ones added to `root.AddCommand(...)`, one line each. `support export` should get its own `support` group.
 
 1. Create `internal/cmd/<group>_<verb>.go` with `newXxxCommand(opts *GlobalOptions) *cobra.Command`.
 2. Keep `RunE` thin; put logic in `runXxx`:

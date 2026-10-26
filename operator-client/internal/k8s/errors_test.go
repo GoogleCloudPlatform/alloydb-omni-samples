@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -65,8 +66,25 @@ func TestFormatErrUsesClientLocation(t *testing.T) {
 }
 
 func TestFormatCRDsMissing(t *testing.T) {
-	err := Format(errors.New("the server could not find the requested resource"), "ns", "ctx")
+	se := apierrors.NewGenericServerResponse(http.StatusNotFound, "get", 
+			schema.GroupResource{Group: "alloydbomni.dbadmin.goog", Resource: "dbcluster"},
+			"", "404 not found", 0, true)
+	
+	err := Format(se, "ns", "ctx")
 	if err == nil || !strings.Contains(err.Error(), "CRDs") {
 		t.Fatalf("got %v", err)
+	}
+	if strings.Contains(err.Error(), "check the name") {
+		t.Fatalf("CRD 404 should not look like a missing object: %v", err)
+	}
+}
+
+func TestFormatUnauthorized(t *testing.T) {
+	err := Format(apierrors.NewUnauthorized("token expired"), "ns", "ctx")
+	if err == nil || !strings.Contains(err.Error(), "authentication failed") {
+		t.Fatalf("got %v", err)
+	}
+	if strings.Contains(err.Error(), "RBAC") {
+		t.Fatal("401 should not mention RBAC")
 	}
 }

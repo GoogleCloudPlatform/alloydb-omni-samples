@@ -9,6 +9,7 @@ func newBackupCommand(opts *GlobalOptions) *cobra.Command {
 		Use:     "backup",
 		Aliases: []string{"backups", "bk"},
 		Short:   "Take and list backups",
+		Args:    cobra.NoArgs, // reject mistyped verbs instead of printing help and exiting 0
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},

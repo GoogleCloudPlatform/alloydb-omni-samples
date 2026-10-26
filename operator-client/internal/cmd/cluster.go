@@ -10,6 +10,7 @@ func newClusterCommand(opts *GlobalOptions) *cobra.Command {
 		Use:     "cluster",
 		Aliases: []string{"clusters"},
 		Short:   "Manage AlloyDB Omni database clusters",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},

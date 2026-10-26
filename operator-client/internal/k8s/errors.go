@@ -35,9 +35,13 @@ func Format(err error, ns, kubeContext string) error {
 	}
 	where := location(ns, kubeContext)
 	switch {
+	case apierrors.IsNotFound(err) && strings.Contains(err.Error(), "the server could not find the requested resource"):
+		return wrap(fmt.Sprintf("AlloyDB Omni CRDs are not installed on this cluster%s: %s", where, err), err)
 	case apierrors.IsNotFound(err):
 		return wrap(fmt.Sprintf("not found%s: check the name, -n, and --context: %s", where, err), err)
-	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+	case apierrors.IsUnauthorized(err):
+		return wrap(fmt.Sprintf("authentication failed%s: refresh your kubeconfig credentials: %s", where, err), err)
+	case apierrors.IsForbidden(err):
 		return wrap(fmt.Sprintf("permission denied%s: check RBAC for this user and resource: %s", where, err), err)
 	case apierrors.IsAlreadyExists(err):
 		return wrap(fmt.Sprintf("already exists%s: %s", where, err), err)
