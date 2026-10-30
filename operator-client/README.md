@@ -36,8 +36,8 @@ Register `<group>_<verb>` commands on their **group** command (`cluster.go`, `ba
 Use `c.InNamespace(gvr, "")` for `-A` (all namespaces) and `c.Cluster(gvr)` for cluster-scoped types (CRDs, Nodes). Return `c.FormatErr(err)` for Kubernetes API errors so NotFound/Forbidden include namespace and context. Tests inject a fake via `opts.NewClients`.
 
 ## Contributors
-
 - https://github.com/hemanthsid
 - https://github.com/Eugenehwng
 - https://github.com/EvuhLi
 - https://github.com/kthallam167
+- https://github.com/ojpbarbosa
