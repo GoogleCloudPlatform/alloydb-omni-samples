@@ -15,10 +15,9 @@ func newClusterCommand(opts *GlobalOptions) *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	_ = opts
-	// c.AddCommand(
-	// 	newClusterCreateCommand(opts),
-	// 	newClusterListCommand(opts),
-	// )
+	c.AddCommand(
+		newClusterDescribeCommand(opts),
+		newClusterEditCommand(opts),
+	)
 	return c
 }
