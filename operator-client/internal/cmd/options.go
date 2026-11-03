@@ -52,6 +52,24 @@ func (o *GlobalOptions) WithTimeout(ctx context.Context) (context.Context, conte
 	return context.WithTimeout(ctx, o.Timeout)
 }
 
+// WaitFlags is per-command (--wait / --no-wait). Do not store these on
+// GlobalOptions: two verbs would share one bool.
+type WaitFlags struct {
+	Wait, NoWait bool
+}
+
+// Enabled is true unless the user passed --no-wait or --wait=false.
+func (w *WaitFlags) Enabled() bool { return w.Wait && !w.NoWait }
+
+// AddWaitFlags registers --wait (default true) and --no-wait on cmd.
+func (o *GlobalOptions) AddWaitFlags(cmd *cobra.Command) *WaitFlags {
+	w := &WaitFlags{Wait: true}
+	cmd.Flags().BoolVar(&w.Wait, "wait", true, "wait for the operation to finish")
+	cmd.Flags().BoolVar(&w.NoWait, "no-wait", false, "return as soon as the object is created")
+	cmd.MarkFlagsMutuallyExclusive("wait", "no-wait")
+	return w
+}
+
 // Confirm asks "prompt [y/N] " unless -y was set.
 // The question goes to cmd's error stream so piped stdout stays clean.
 // The answer comes from cmd's input so tests can SetIn instead of touching the real terminal.

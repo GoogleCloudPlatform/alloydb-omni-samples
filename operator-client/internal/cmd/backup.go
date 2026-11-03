@@ -1,6 +1,9 @@
 package cmd
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
 
 // newBackupCommand is the `adbo backup` group (aliases: backups, bk).
 // Add verbs here, not in root.go, so parallel PRs do not collide.
@@ -14,10 +17,14 @@ func newBackupCommand(opts *GlobalOptions) *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	_ = opts
-	// c.AddCommand(
-	// 	newBackupTriggerCommand(opts),
-	// 	newBackupListCommand(opts),
-	// )
+	c.AddCommand(
+		newBackupTriggerCommand(opts),
+		newBackupListCommand(opts),
+	)
 	return c
+}
+
+func dbclusterRef(obj *unstructured.Unstructured) string {
+	ref, _, _ := unstructured.NestedString(obj.Object, "spec", "dbclusterRef")
+	return ref
 }

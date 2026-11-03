@@ -62,6 +62,26 @@ func TestWithTimeout(t *testing.T) {
 	}
 }
 
+func TestAddWaitFlags(t *testing.T) {
+	opts := &GlobalOptions{}
+	cmd := &cobra.Command{Use: "x", RunE: func(*cobra.Command, []string) error { return nil }}
+	w := opts.AddWaitFlags(cmd)
+	cmd.SetArgs([]string{"--no-wait"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if w.Enabled() {
+		t.Fatal("--no-wait should disable wait")
+	}
+
+	cmd2 := &cobra.Command{Use: "x", RunE: func(*cobra.Command, []string) error { return nil }}
+	opts.AddWaitFlags(cmd2)
+	cmd2.SetArgs([]string{"--wait", "--no-wait"})
+	if err := cmd2.Execute(); err == nil {
+		t.Fatal("expected --wait and --no-wait to be mutually exclusive")
+	}
+}
+
 func TestConfirm(t *testing.T) {
 	cmd := func(in string) *cobra.Command {
 		c := &cobra.Command{}
