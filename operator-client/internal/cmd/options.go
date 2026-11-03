@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/config"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 )
 
@@ -26,21 +27,30 @@ type GlobalOptions struct {
 	// runXxx can be exercised without a kubeconfig or live cluster.
 	NewClients func() (*k8s.Clients, error)
 
-	// SelectedCluster is the default from `adbo cluster select`. Tests
-	// set this directly; persistence lands with that command.
-	SelectedCluster string
+	clients *k8s.Clients // built once, so ClusterName and RunE share it
 }
 
 // Clients returns Kubernetes clients. Production uses kubeconfig;
 // tests inject fakes via NewClients.
 func (o *GlobalOptions) Clients() (*k8s.Clients, error) {
-	if o.NewClients != nil {
-		return o.NewClients()
+	if o.clients != nil {
+		return o.clients, nil
 	}
-	if o.KubeFlags == nil {
+	var c *k8s.Clients
+	var err error
+	switch {
+	case o.NewClients != nil:
+		c, err = o.NewClients()
+	case o.KubeFlags == nil:
 		return nil, fmt.Errorf("kubernetes clients not configured")
+	default:
+		c, err = k8s.New(o.KubeFlags)
 	}
-	return k8s.New(o.KubeFlags)
+	if err != nil {
+		return nil, err
+	}
+	o.clients = c
+	return c, nil
 }
 
 // WithTimeout bounds ctx for async waits (backup trigger, create, restore).
@@ -79,22 +89,18 @@ func (o *GlobalOptions) ClusterName(args []string) (string, error) {
 	if len(args) > 0 && args[0] != "" {
 		return args[0], nil
 	}
-	if o.SelectedCluster != "" {
-		return o.SelectedCluster, nil
+	// The selection is keyed by kube-context + namespace so a context
+	// switch cannot silently retarget another cluster.
+	c, err := o.Clients()
+	if err != nil {
+		return "", err
 	}
-	if name := o.loadSelectedCluster(); name != "" {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	if name := cfg.SelectedCluster(c.Context, c.Namespace); name != "" {
 		return name, nil
 	}
 	return "", fmt.Errorf("no cluster specified: pass CLUSTER_NAME or run `adbo cluster select CLUSTER_NAME`")
-}
-
-// loadSelectedCluster reads the default cluster from local config.
-// Persistence should be keyed by kube-context + namespace so a context
-// switch cannot silently retarget another cluster.
-func (o *GlobalOptions) loadSelectedCluster() string {
-	if o.SelectedCluster != "" {
-		return o.SelectedCluster
-	}
-	// TODO: ~/.config/adbo/config.yaml keyed by context + namespace
-	return ""
 }

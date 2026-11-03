@@ -33,7 +33,7 @@ func Format(err error, ns, kubeContext string) error {
 	if errors.As(err, &already) {
 		return err
 	}
-	where := location(ns, kubeContext)
+	where := Location(ns, kubeContext)
 	switch {
 	case apierrors.IsNotFound(err) && strings.Contains(err.Error(), "the server could not find the requested resource"):
 		return wrap(fmt.Sprintf("AlloyDB Omni CRDs are not installed on this cluster%s: %s", where, err), err)
@@ -72,7 +72,9 @@ func (c *Clients) FormatErr(err error) error {
 	return Format(err, c.Namespace, c.Context)
 }
 
-func location(ns, kubeContext string) string {
+// Location describes where a request ran, e.g. ` in namespace "x" (context "y")`,
+// leaving out whichever part is empty.
+func Location(ns, kubeContext string) string {
 	switch {
 	case ns != "" && kubeContext != "":
 		return fmt.Sprintf(" in namespace %q (context %q)", ns, kubeContext)
