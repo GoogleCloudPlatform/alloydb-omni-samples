@@ -46,7 +46,7 @@ func newFailoverCommand(opts *GlobalOptions) *cobra.Command {
 		"failover [CLUSTER_NAME]",
 		"Promote a standby when the primary is down (may lose recent writes)",
 		"  adbo failover my-db\n"+
-			"  adbo failover my-db --to my-db-instance-b -y")
+			"  adbo failover my-db --target my-db-instance-b -y")
 }
 
 func newSwitchoverCommand(opts *GlobalOptions) *cobra.Command {
@@ -54,7 +54,7 @@ func newSwitchoverCommand(opts *GlobalOptions) *cobra.Command {
 		"switchover [CLUSTER_NAME]",
 		"Swap the primary with a standby, with no data loss",
 		"  adbo switchover my-db\n"+
-			"  adbo switchover my-db --to my-db-instance-b --no-wait")
+			"  adbo switchover my-db --target my-db-instance-b --no-wait")
 }
 
 func newHACommand(opts *GlobalOptions, k haKind, use, short, example string) *cobra.Command {
@@ -79,8 +79,8 @@ func newHACommand(opts *GlobalOptions, k haKind, use, short, example string) *co
 		},
 	}
 
-	cmd.Flags().StringVar(&f.newPrimary, "to", "",
-		"standby instance to promote (default: the only standby, or the operator's choice)")
+	cmd.Flags().StringVar(&f.newPrimary, "target", "",
+		"standby instance to promote (default: the only standby, otherwise the operator's choice)")
 	waitFlags = opts.AddWaitFlags(cmd)
 	return cmd
 }
@@ -151,11 +151,7 @@ func pickNewPrimary(k haKind, cluster, requested string, standbys []string) (str
 	if len(standbys) == 1 {
 		return standbys[0], nil
 	}
-	if k.kind == "Failover" {
-		return "", nil
-	}
-	return "", fmt.Errorf("cluster %q has %d standbys; choose one with --to (%s)",
-		cluster, len(standbys), strings.Join(standbys, ", "))
+	return "", nil
 }
 
 func runHAOperation(cmd *cobra.Command, opts *GlobalOptions, k haKind, cluster string, f haFlags) error {
@@ -235,6 +231,8 @@ func haOperationDone(obj *unstructured.Unstructured) (bool, error) {
 	switch {
 	case state == "Success":
 		return true, nil
+	case state == "Failed_RollbackInProgress":
+		return false, nil
 	case state == "Failed_RollbackSuccess":
 		return false, &wait.FailedError{Name: obj.GetName(), Phase: state,
 			Reason: "it failed but was rolled back; the cluster is unchanged. " + wait.Reason(obj)}
