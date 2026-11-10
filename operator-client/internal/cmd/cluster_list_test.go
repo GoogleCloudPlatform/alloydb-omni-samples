@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
@@ -88,5 +89,18 @@ func TestClusterListRejectsArgs(t *testing.T) {
 	root.SetErr(&bytes.Buffer{})
 	if err := root.Execute(); err == nil {
 		t.Fatal("expected positional arg to be rejected")
+	}
+}
+
+func TestClusterListPrefersRunningVersionAndURL(t *testing.T) {
+	db := dbCluster("default", "up-db", "DBClusterReady")
+	_ = unstructured.SetNestedField(db.Object, "15.7.0", "status", "primary", "currentDatabaseVersion")
+	_ = unstructured.SetNestedField(db.Object, "10.0.0.1:5432", "status", "primary", "url")
+	out := runList(t, output.OutputTable, false, db)
+	if !strings.Contains(out, "15.7.0") || strings.Contains(out, "16.8.0") {
+		t.Errorf("VERSION should show the running 15.7.0, not the desired 16.8.0:\n%s", out)
+	}
+	if !strings.Contains(out, "10.0.0.1:5432") {
+		t.Errorf("ENDPOINT should prefer status.primary.url:\n%s", out)
 	}
 }

@@ -56,22 +56,25 @@ func runClusterList(cmd *cobra.Command, opts *GlobalOptions, allNamespaces bool)
 		return items[i].GetName() < items[j].GetName()
 	})
 
-	headers := []string{"NAME"}
+	var headers []string
+	if allNamespaces {
+		headers = append(headers, "NAMESPACE")
+	}
+	headers = append(headers, "NAME")
 	for _, col := range clusterStatusColumns {
 		headers = append(headers, strings.ToUpper(col))
 	}
 	headers = append(headers, "AGE")
-	if allNamespaces {
-		headers = append([]string{"NAMESPACE"}, headers...)
-	}
 	table := output.Table{Headers: headers}
 	for i := range items {
 		db := &items[i]
-		row := append([]string{db.GetName()}, clusterStatus(db)...)
-		row = append(row, duration.HumanDuration(time.Since(db.GetCreationTimestamp().Time)))
+		var row []string
 		if allNamespaces {
-			row = append([]string{db.GetNamespace()}, row...)
+			row = append(row, db.GetNamespace())
 		}
+		row = append(row, db.GetName())
+		row = append(row, clusterStatus(db)...)
+		row = append(row, duration.HumanDuration(time.Since(db.GetCreationTimestamp().Time)))
 		table.Rows = append(table.Rows, row)
 	}
 	return output.Print(cmd.OutOrStdout(), opts.Output, table, items)
@@ -86,8 +89,16 @@ func clusterStatus(db *unstructured.Unstructured) []string {
 	return []string{
 		k8s.StringField(db, "status", "phase"),
 		k8s.StringField(db, "status", "primary", "phase"),
-		k8s.StringField(db, "status", "primary", "endpoint"),
-		k8s.StringField(db, "spec", "databaseVersion"),
+		// Match `cluster describe`: prefer url (<ip>:<port>) over the
+		// deprecated endpoint, which older operators still set.
+		k8s.FirstStringField(db,
+			[]string{"status", "primary", "url"},
+			[]string{"status", "primary", "endpoint"}),
+		// Show the running version so a stuck or in-progress upgrade is
+		// visible; fall back to the desired version before provisioning.
+		k8s.FirstStringField(db,
+			[]string{"status", "primary", "currentDatabaseVersion"},
+			[]string{"spec", "databaseVersion"}),
 		k8s.ConditionStatus(db, "HAReady"),
 	}
 }
