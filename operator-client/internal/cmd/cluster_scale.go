@@ -37,7 +37,7 @@ var (
 const maxStandbys = 5
 
 // scaleMinMemory catches unit mistakes (e.g. --memory 16 meaning 16 bytes); it
-// is not a sizing guide. Matches `cluster edit`.
+// is not a sizing guide.
 var scaleMinMemory = resource.MustParse("1Gi")
 
 // errDeclined is returned when the user answers no (or stdin is closed
@@ -133,6 +133,9 @@ func runClusterScale(cmd *cobra.Command, opts *GlobalOptions, name string, f sca
 	prompt := "Apply these changes?"
 	if restartsDatabase(changes) {
 		prompt = "Changing CPU or memory restarts the database. Apply?"
+		if !hasStandbys(db) {
+			fmt.Fprintln(cmd.ErrOrStderr(), "This cluster has no standbys, so it is unavailable until the restart finishes.")
+		}
 	}
 	ok, err := opts.Confirm(cmd, prompt)
 	if err != nil {
@@ -407,6 +410,14 @@ func restartsDatabase(changes []change) bool {
 	return false
 }
 
+// hasStandbys reports whether db runs any standby right now. Without one, a
+// restart takes the whole cluster down until the primary is back.
+func hasStandbys(db *unstructured.Unstructured) bool {
+	v, found, _ := unstructured.NestedFieldNoCopy(db.Object, standbysPath...)
+	n, err := strconv.ParseInt(fmt.Sprint(v), 10, 64)
+	return found && err == nil && n > 0
+}
+
 // quantityField reads a cpu/memory value that may be stored as a number or
 // a string, returning "" when unset.
 func quantityField(obj *unstructured.Unstructured, path ...string) string {
@@ -443,7 +454,6 @@ func parseScaleQuantity(flag, value string) (resource.Quantity, error) {
 }
 
 // quantityEqual reports whether cur (as stored on the cluster) equals want.
-// Not named sameQuantity: `cluster edit` defines that in this package.
 func quantityEqual(cur string, want resource.Quantity) bool {
 	have, err := resource.ParseQuantity(cur)
 	return err == nil && have.Cmp(want) == 0
