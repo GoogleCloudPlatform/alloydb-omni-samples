@@ -28,20 +28,30 @@ const editHeader = `# Edit the DBCluster below and save to apply it. Lines start
 `
 
 func newClusterEditCommand(opts *GlobalOptions) *cobra.Command {
+	var interactive bool
 	cmd := &cobra.Command{
 		Use:   "edit [CLUSTER_NAME]",
-		Short: "Edit a cluster's DBCluster in $EDITOR",
+		Short: "Edit a cluster's DBCluster in $EDITOR or a terminal UI",
 		Long: "Open the DBCluster in $KUBE_EDITOR or $EDITOR (default vi) and apply\n" +
 			"what you save. If the change is rejected, the editor reopens with the\n" +
-			"error at the top. To change CPU, memory, disk or standbys, use\n" +
-			"`adbo cluster scale`.",
+			"error at the top.\n\n" +
+			"With -i, edit the spec field by field in a terminal UI instead. Each\n" +
+			"change is checked with the API server (a dry run) as you make it, so\n" +
+			"you can iterate until it's accepted, then apply it.\n\n" +
+			"To change CPU, memory, disk or standbys, `adbo cluster scale` is simpler.",
 		Example: "  adbo cluster edit my-db\n" +
+			"  adbo cluster edit my-db -i\n" +
 			"  KUBE_EDITOR=\"code --wait\" adbo cluster edit my-db",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if interactive {
+				return runClusterEditInteractive(cmd, opts, args)
+			}
 			return runClusterEditInEditor(cmd, opts, args)
 		},
 	}
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false,
+		"edit field by field in a terminal UI that checks each change with the API server")
 	// Resizing lives in `cluster scale`; say so instead of a bare "unknown flag".
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		if strings.Contains(err.Error(), "--cpu") || strings.Contains(err.Error(), "--memory") {
@@ -221,9 +231,19 @@ func stripLeadingComments(s string) string {
 	return strings.Join(lines[i:], "\n")
 }
 
-// runEditor runs $KUBE_EDITOR, then $EDITOR, then vi. It goes through the
-// shell so values like EDITOR="code --wait" work.
+// runEditor runs the editor on path and waits for it to close.
 func runEditor(path string) error {
+	c, editor := editorCommand(path)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("running editor %q: %w", editor, err)
+	}
+	return nil
+}
+
+// editorCommand runs $KUBE_EDITOR, then $EDITOR, then vi. It goes through
+// the shell so values like EDITOR="code --wait" work.
+func editorCommand(path string) (*exec.Cmd, string) {
 	editor := os.Getenv("KUBE_EDITOR")
 	if editor == "" {
 		editor = os.Getenv("EDITOR")
@@ -231,10 +251,5 @@ func runEditor(path string) error {
 	if editor == "" {
 		editor = "vi"
 	}
-	c := exec.Command("sh", "-c", editor+` "$1"`, "adbo-edit", path)
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("running editor %q: %w", editor, err)
-	}
-	return nil
+	return exec.Command("sh", "-c", editor+` "$1"`, "adbo-edit", path), editor
 }
