@@ -54,8 +54,8 @@ func NewRootCommand() *cobra.Command {
 				return fmt.Errorf("invalid --output %q: use %s, %s, or %s",
 					opts.Output, output.OutputTable, output.OutputJSON, output.OutputYAML)
 			}
-			if opts.Timeout <= 0 {
-				return fmt.Errorf("--timeout must be greater than 0")
+			if opts.Timeout < 0 {
+				return fmt.Errorf("--timeout must be greater than or equal to 0")
 			}
 			return nil
 		},
