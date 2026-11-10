@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/config"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 )
 
 func newClusterSelectCommand(opts *GlobalOptions) *cobra.Command {
@@ -24,8 +26,9 @@ func newClusterSelectCommand(opts *GlobalOptions) *cobra.Command {
 			"The choice is saved per kube-context and namespace, so switching either\n" +
 			"never points a command at a cluster you picked somewhere else.\n" +
 			"With no CLUSTER_NAME, prints the current selection.\n" +
-			"With -v, also prints the cluster's status and where the selection is saved.",
-		Example: "  adbo cluster select my-db\n  adbo cluster select\n  adbo cluster select -v\n  adbo cluster select --clear",
+			"With -v, also prints the cluster's status and where the selection is saved.\n" +
+			"With -o json|yaml, prints the selection as an object.",
+		Example: "  adbo cluster select my-db\n  adbo cluster select\n  adbo cluster select -v\n  adbo cluster select -o json\n  adbo cluster select --clear",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch {
@@ -46,6 +49,15 @@ func newClusterSelectCommand(opts *GlobalOptions) *cobra.Command {
 	return cmd
 }
 
+// selection is what `cluster select` prints for -o json|yaml.
+type selection struct {
+	Context    string            `json:"context"`
+	Namespace  string            `json:"namespace"`
+	Cluster    string            `json:"cluster"` // "" when nothing is selected
+	ConfigPath string            `json:"configPath"`
+	Status     map[string]string `json:"status,omitempty"` // absent when the cluster was not read or no longer exists
+}
+
 func runClusterSelect(cmd *cobra.Command, opts *GlobalOptions, name string, verbose bool) error {
 	c, cfg, err := selectionState(opts)
 	if err != nil {
@@ -59,12 +71,8 @@ func runClusterSelect(cmd *cobra.Command, opts *GlobalOptions, name string, verb
 	if err := saveSelection(cfg, c, name); err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Selected cluster %q%s\n", name, k8s.Location(c.Namespace, c.Context))
-	if verbose {
-		return printSelectionDetails(out, db)
-	}
-	return nil
+	msg := fmt.Sprintf("Selected cluster %q%s\n", name, k8s.Location(c.Namespace, c.Context))
+	return printSelection(cmd, opts, c, name, db, verbose, msg)
 }
 
 func runClusterShow(cmd *cobra.Command, opts *GlobalOptions, verbose bool) error {
@@ -72,27 +80,27 @@ func runClusterShow(cmd *cobra.Command, opts *GlobalOptions, verbose bool) error
 	if err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
 	where := k8s.Location(c.Namespace, c.Context)
 	current := cfg.SelectedCluster(c.Context, c.Namespace)
 	if current == "" {
-		fmt.Fprintf(out, "No cluster selected%s. Run `adbo cluster select CLUSTER_NAME`.\n", where)
-		return nil
+		msg := fmt.Sprintf("No cluster selected%s. Run `adbo cluster select CLUSTER_NAME`.\n", where)
+		return printSelection(cmd, opts, c, "", nil, false, msg)
 	}
-	fmt.Fprintf(out, "%s%s\n", current, where)
-	if !verbose {
-		return nil
+	// Machine output always carries status, so it needs the cluster too.
+	needCluster := verbose || isStructured(opts)
+	var db *unstructured.Unstructured
+	if needCluster {
+		db, err = c.In(k8s.DBClusterGVR).Get(cmd.Context(), current, metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(err):
+			// Keep the selection: the user may be about to recreate it.
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: cluster %q no longer exists; select another or run `adbo cluster select --clear`\n", current)
+			db = nil
+		case err != nil:
+			return c.FormatErr(err)
+		}
 	}
-	db, err := c.In(k8s.DBClusterGVR).Get(cmd.Context(), current, metav1.GetOptions{})
-	switch {
-	case apierrors.IsNotFound(err):
-		// Keep the selection: the user may be about to recreate it.
-		fmt.Fprintf(out, "  Warning: cluster %q no longer exists; select another or run `adbo cluster select --clear`\n", current)
-		db = nil
-	case err != nil:
-		return c.FormatErr(err)
-	}
-	return printSelectionDetails(out, db)
+	return printSelection(cmd, opts, c, current, db, verbose, fmt.Sprintf("%s%s\n", current, where))
 }
 
 func runClusterClear(cmd *cobra.Command, opts *GlobalOptions, verbose bool) error {
@@ -103,12 +111,8 @@ func runClusterClear(cmd *cobra.Command, opts *GlobalOptions, verbose bool) erro
 	if err := saveSelection(cfg, c, ""); err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Cleared the selected cluster%s\n", k8s.Location(c.Namespace, c.Context))
-	if verbose {
-		return printSelectionDetails(out, nil)
-	}
-	return nil
+	msg := fmt.Sprintf("Cleared the selected cluster%s\n", k8s.Location(c.Namespace, c.Context))
+	return printSelection(cmd, opts, c, "", nil, verbose, msg)
 }
 
 // selectionState loads what every select mode needs: where we are, and the saved selections.
@@ -130,13 +134,39 @@ func saveSelection(cfg *config.Config, c *k8s.Clients, name string) error {
 	return cfg.Save()
 }
 
-// printSelectionDetails prints db's status (the same fields as `adbo cluster list`)
-// and the config file path. db is nil when the selected cluster no longer exists.
-func printSelectionDetails(out io.Writer, db *unstructured.Unstructured) error {
+func isStructured(opts *GlobalOptions) bool {
+	return opts.Output == output.OutputJSON || opts.Output == output.OutputYAML
+}
+
+// printSelection writes a selection object for -o json|yaml; otherwise msg,
+// plus status details and the config path with -v. db is nil when the
+// cluster was not read or no longer exists.
+func printSelection(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, name string, db *unstructured.Unstructured, verbose bool, msg string) error {
 	path, err := config.Path()
 	if err != nil {
 		return err
 	}
+	out := cmd.OutOrStdout()
+	if isStructured(opts) {
+		sel := selection{Context: c.Context, Namespace: c.Namespace, Cluster: name, ConfigPath: path}
+		if db != nil {
+			sel.Status = map[string]string{}
+			for i, v := range clusterStatus(db) {
+				sel.Status[strings.ToLower(clusterStatusColumns[i])] = v
+			}
+		}
+		return output.Print(out, opts.Output, output.Table{}, sel)
+	}
+	fmt.Fprint(out, msg)
+	if !verbose {
+		return nil
+	}
+	return printSelectionDetails(out, db, path)
+}
+
+// printSelectionDetails prints db's status (the same fields as `adbo cluster list`)
+// and the config file path. db is nil when there is no cluster to describe.
+func printSelectionDetails(out io.Writer, db *unstructured.Unstructured, path string) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if db != nil {
 		for i, v := range clusterStatus(db) {

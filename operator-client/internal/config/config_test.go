@@ -70,3 +70,27 @@ func TestLoadRejectsCorruptFile(t *testing.T) {
 		t.Fatal("expected an error for a corrupt config")
 	}
 }
+
+func TestSaveLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	c := &Config{}
+	c.SetSelectedCluster("ctx", "ns", "db")
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "adbo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.yaml" {
+		t.Fatalf("want only config.yaml, got %v", entries)
+	}
+	info, err := os.Stat(filepath.Join(dir, "adbo", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("config mode = %o, want 600", perm)
+	}
+}

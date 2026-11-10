@@ -27,6 +27,10 @@ type GlobalOptions struct {
 	// runXxx can be exercised without a kubeconfig or live cluster.
 	NewClients func() (*k8s.Clients, error)
 
+	// SelectedCluster, when set, overrides the selection saved by
+	// `adbo cluster select`. Tests set it to skip the config file.
+	SelectedCluster string
+
 	clients *k8s.Clients // built once, so ClusterName and RunE share it
 }
 
@@ -88,6 +92,9 @@ func (o *GlobalOptions) Confirm(cmd *cobra.Command, prompt string) (bool, error)
 func (o *GlobalOptions) ClusterName(args []string) (string, error) {
 	if len(args) > 0 && args[0] != "" {
 		return args[0], nil
+	}
+	if o.SelectedCluster != "" {
+		return o.SelectedCluster, nil
 	}
 	// The selection is keyed by kube-context + namespace so a context
 	// switch cannot silently retarget another cluster.

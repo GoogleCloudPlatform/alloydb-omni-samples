@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,12 +131,50 @@ func TestClusterSelectVerboseWarnsWhenSelectionDeleted(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	saveTestSelection(t, "test-ctx", "default", "gone-db")
 
-	var buf bytes.Buffer
-	if err := runClusterShow(testCommand(&buf), fakeOpts(output.OutputTable), true); err != nil {
+	var buf, errBuf bytes.Buffer
+	cmd := testCommand(&buf)
+	cmd.SetErr(&errBuf)
+	if err := runClusterShow(cmd, fakeOpts(output.OutputTable), true); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), `cluster "gone-db" no longer exists`) {
-		t.Fatalf("want deleted-cluster warning, got:\n%s", buf.String())
+	if !strings.Contains(errBuf.String(), `cluster "gone-db" no longer exists`) {
+		t.Fatalf("want deleted-cluster warning on stderr, got:\n%s", errBuf.String())
+	}
+	if strings.Contains(buf.String(), "no longer exists") {
+		t.Fatalf("warning leaked into stdout:\n%s", buf.String())
+	}
+}
+
+func TestClusterSelectJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	opts := fakeOpts(output.OutputJSON, dbCluster("default", "my-db", "DBClusterReady"))
+
+	var buf bytes.Buffer
+	if err := runClusterSelect(testCommand(&buf), opts, "my-db", false); err != nil {
+		t.Fatal(err)
+	}
+	var got selection
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("select -o json is not JSON: %v\n%s", err, buf.String())
+	}
+	if got.Cluster != "my-db" || got.Context != "test-ctx" || got.Namespace != "default" ||
+		got.ConfigPath != filepath.Join(dir, "adbo", "config.yaml") || got.Status["phase"] != "DBClusterReady" {
+		t.Fatalf("unexpected selection: %+v", got)
+	}
+
+	// After --clear, show reports an empty cluster rather than plain text.
+	buf.Reset()
+	if err := runClusterClear(testCommand(&buf), opts, false); err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	if err := runClusterShow(testCommand(&buf), opts, false); err != nil {
+		t.Fatal(err)
+	}
+	got = selection{}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil || got.Cluster != "" || got.Status != nil {
+		t.Fatalf("want empty selection, got %+v (err %v)\n%s", got, err, buf.String())
 	}
 }
 

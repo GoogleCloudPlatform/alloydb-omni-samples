@@ -52,6 +52,19 @@ func TestClusterName(t *testing.T) {
 	}
 }
 
+func TestClusterNameInMemoryOverride(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	saveTestSelection(t, "test-ctx", "default", "saved")
+	opts := fakeOpts(output.OutputTable)
+	opts.SelectedCluster = "override"
+	if name, err := opts.ClusterName(nil); err != nil || name != "override" {
+		t.Fatalf("SelectedCluster should win over the config file; got %q, %v", name, err)
+	}
+	if name, _ := opts.ClusterName([]string{"explicit"}); name != "explicit" {
+		t.Fatalf("a positional name should still win; got %q", name)
+	}
+}
+
 func TestClusterNameReportsCorruptConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
