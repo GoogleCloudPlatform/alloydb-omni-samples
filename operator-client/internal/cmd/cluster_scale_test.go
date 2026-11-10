@@ -182,6 +182,42 @@ func TestClusterScaleRestartWarningOnlyWhenCPUOrMemoryChanges(t *testing.T) {
 	}
 }
 
+func TestClusterScaleWarnsOfOutageWithoutStandbys(t *testing.T) {
+	opts := fakeOpts(output.OutputTable, sizedCluster("my-db")) // no standbys
+	var out, errOut bytes.Buffer
+	if err := runClusterScale(scaleCmd(&out, &errOut, "y\n"), opts, "my-db", scaleFlags{memory: "32Gi", standbys: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), "no standbys, so it is unavailable until the restart finishes") {
+		t.Errorf("want an outage warning for a cluster without standbys:\n%s", errOut.String())
+	}
+}
+
+func TestClusterScaleNoOutageWarningWithStandbysOrWithoutRestart(t *testing.T) {
+	withStandby := sizedCluster("my-db")
+	_ = unstructured.SetNestedField(withStandby.Object, int64(1), "spec", "availability", "numberOfStandbys")
+	tests := []struct {
+		name string
+		db   *unstructured.Unstructured
+		f    scaleFlags
+	}{
+		{"has a standby", withStandby, scaleFlags{memory: "32Gi", standbys: -1}},
+		{"disk only", sizedCluster("my-db"), scaleFlags{disk: "20Gi", standbys: -1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := fakeOpts(output.OutputTable, tc.db)
+			var out, errOut bytes.Buffer
+			if err := runClusterScale(scaleCmd(&out, &errOut, "y\n"), opts, "my-db", tc.f); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(errOut.String(), "unavailable") {
+				t.Errorf("unexpected outage warning:\n%s", errOut.String())
+			}
+		})
+	}
+}
+
 func TestClusterScaleRefusesUnreadableDiskSize(t *testing.T) {
 	db := sizedCluster("my-db")
 	_ = unstructured.SetNestedSlice(db.Object, []any{map[string]any{"name": "DataDisk"}},
