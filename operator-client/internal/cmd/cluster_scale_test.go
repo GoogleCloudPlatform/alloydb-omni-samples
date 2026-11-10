@@ -2,15 +2,25 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/wait"
 )
 
 // sizedCluster is a DBCluster with 2 CPU, 16Gi memory, a 10Gi DataDisk
@@ -84,11 +94,12 @@ func TestClusterScaleAppliesChanges(t *testing.T) {
 func TestClusterScaleDeclinedChangesNothing(t *testing.T) {
 	opts := fakeOpts(output.OutputTable, sizedCluster("my-db"))
 	var out, errOut bytes.Buffer
-	if err := runClusterScale(scaleCmd(&out, &errOut, "n\n"), opts, "my-db", scaleFlags{cpu: "8", standbys: -1}); err != nil {
-		t.Fatal(err)
+	err := runClusterScale(scaleCmd(&out, &errOut, "n\n"), opts, "my-db", scaleFlags{cpu: "8", standbys: -1})
+	if !errors.Is(err, errDeclined) {
+		t.Fatalf("declining must fail so scripts notice; got %v", err)
 	}
-	if !strings.Contains(out.String(), "Cancelled") {
-		t.Errorf("want cancel message, got %q", out.String())
+	if out.Len() != 0 {
+		t.Errorf("nothing should go to stdout when declined, got %q", out.String())
 	}
 	db := getCluster(t, opts, "my-db")
 	if cpu, _, _ := unstructured.NestedInt64(db.Object, "spec", "primarySpec", "resources", "cpu"); cpu != 2 {
@@ -106,7 +117,12 @@ func TestClusterScaleRejects(t *testing.T) {
 		{"shrink disk", scaleFlags{disk: "5Gi", standbys: -1}, "can grow but not shrink"},
 		{"bad cpu", scaleFlags{cpu: "lots", standbys: -1}, "not a valid positive size"},
 		{"zero memory", scaleFlags{memory: "0", standbys: -1}, "not a valid positive size"},
-		{"negative standbys", scaleFlags{standbys: -2, standbysSet: true}, "0 or more"},
+		{"unitless memory", scaleFlags{memory: "16", standbys: -1}, "16 bytes; add a unit"},
+		{"tiny memory", scaleFlags{memory: "512Mi", standbys: -1}, "at least 1Gi"},
+		{"unitless disk", scaleFlags{disk: "100", standbys: -1}, "100 bytes; add a unit"},
+		{"byte unit on cpu", scaleFlags{cpu: "4Gi", standbys: -1}, "number of cores"},
+		{"negative standbys", scaleFlags{standbys: -2, standbysSet: true}, "between 0 and 5"},
+		{"too many standbys", scaleFlags{standbys: 6, standbysSet: true}, "between 0 and 5"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,5 +212,202 @@ func TestPlanScalePatchHasOnlyChangedFieldsAndResourceVersion(t *testing.T) {
 	spec, _, _ := unstructured.NestedMap(patch, "spec")
 	if _, ok := spec["databaseVersion"]; ok {
 		t.Error("patch must not resend fields scale does not change")
+	}
+}
+
+func TestPlanScaleStandbysSetsRequiredReadReplicaField(t *testing.T) {
+	// No spec.availability: the CRD requires enableStandbyAsReadReplica
+	// once that block exists, so the patch must include it.
+	_, patch, err := planScale(sizedCluster("my-db"), scaleFlags{standbys: 1, standbysSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, found, _ := unstructured.NestedBool(patch, "spec", "availability", "enableStandbyAsReadReplica"); !found || v {
+		t.Errorf("patch availability = %v, want enableStandbyAsReadReplica=false", patch["spec"])
+	}
+
+	// When the cluster already sets it, leave the user's choice alone.
+	db := sizedCluster("my-db")
+	_ = unstructured.SetNestedField(db.Object, true, "spec", "availability", "enableStandbyAsReadReplica")
+	_, patch, err = planScale(db, scaleFlags{standbys: 2, standbysSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(patch, "spec", "availability", "enableStandbyAsReadReplica"); found {
+		t.Error("patch must not overwrite an existing enableStandbyAsReadReplica")
+	}
+}
+
+func TestClusterScaleJSONPrintsUpdatedCluster(t *testing.T) {
+	opts := fakeOpts(output.OutputJSON, sizedCluster("my-db"))
+	opts.Yes = true
+	var out, errOut bytes.Buffer
+	if err := runClusterScale(scaleCmd(&out, &errOut, ""), opts, "my-db", scaleFlags{cpu: "4", standbys: -1}); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("scale -o json is not JSON: %v\n%s", err, out.String())
+	}
+	if cpu, _, _ := unstructured.NestedFieldNoCopy(got, "spec", "primarySpec", "resources", "cpu"); cpu != float64(4) {
+		t.Errorf("printed cpu = %v, want 4", cpu)
+	}
+}
+
+func TestClusterScaleConflictIsReported(t *testing.T) {
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{k8s.DBClusterGVR: "DBClusterList"}, sizedCluster("my-db"))
+	dyn.PrependReactor("patch", "dbclusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewConflict(k8s.DBClusterGVR.GroupResource(), "my-db", errors.New("modified"))
+	})
+	opts := &GlobalOptions{Output: output.OutputTable, Yes: true,
+		NewClients: func() (*k8s.Clients, error) {
+			return &k8s.Clients{Dynamic: dyn, Namespace: "default", Context: "test-ctx"}, nil
+		}}
+	var out, errOut bytes.Buffer
+	err := runClusterScale(scaleCmd(&out, &errOut, ""), opts, "my-db", scaleFlags{cpu: "4", standbys: -1})
+	if err == nil || !strings.Contains(err.Error(), "changed while we were updating") {
+		t.Fatalf("want conflict error, got %v", err)
+	}
+}
+
+// readyStatus marks db Ready at observedGeneration og, with allocated
+// resources matching sizedCluster's spec unless overridden.
+func readyStatus(db *unstructured.Unstructured, og int64, allocated map[string]any) {
+	_ = unstructured.SetNestedField(db.Object, clusterReadyPhase, "status", "phase")
+	_ = unstructured.SetNestedField(db.Object, og, "status", "observedGeneration")
+	if allocated != nil {
+		_ = unstructured.SetNestedField(db.Object, allocated, "status", "primary", "allocatedResources")
+	}
+}
+
+func TestScaleDone(t *testing.T) {
+	_, patch, err := planScale(sizedCluster("my-db"), scaleFlags{cpu: "4", disk: "50Gi", standbys: 1, standbysSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := map[string]any{"cpu": int64(4), "memory": "16Gi",
+		"disks": []any{map[string]any{"name": "DataDisk", "size": "50Gi"}}}
+	stale := map[string]any{"cpu": int64(2), "memory": "16Gi",
+		"disks": []any{map[string]any{"name": "DataDisk", "size": "10Gi"}}}
+
+	tests := []struct {
+		name    string
+		mutate  func(db *unstructured.Unstructured)
+		done    bool
+		failure bool
+	}{
+		{"all applied", func(db *unstructured.Unstructured) { readyStatus(db, 2, applied) }, true, false},
+		{"old generation", func(db *unstructured.Unstructured) { readyStatus(db, 1, applied) }, false, false},
+		{"not ready", func(db *unstructured.Unstructured) {
+			readyStatus(db, 2, applied)
+			_ = unstructured.SetNestedField(db.Object, "DBClusterReconciling", "status", "phase")
+		}, false, false},
+		{"resources not yet allocated", func(db *unstructured.Unstructured) { readyStatus(db, 2, stale) }, false, false},
+		{"operator omits allocatedResources", func(db *unstructured.Unstructured) { readyStatus(db, 2, nil) }, true, false},
+		{"HA not ready", func(db *unstructured.Unstructured) {
+			readyStatus(db, 2, applied)
+			_ = unstructured.SetNestedSlice(db.Object, []any{map[string]any{"type": "HAReady", "status": "False"}}, "status", "conditions")
+		}, false, false},
+		{"failed phase", func(db *unstructured.Unstructured) {
+			readyStatus(db, 2, applied)
+			_ = unstructured.SetNestedField(db.Object, "DBClusterReconcileFailed", "status", "phase")
+		}, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := sizedCluster("my-db") // dbCluster sets HAReady=True
+			tc.mutate(db)
+			done, err := scaleDone(2, patch)(db)
+			var failed *wait.FailedError
+			if done != tc.done || errors.As(err, &failed) != tc.failure {
+				t.Fatalf("done=%v err=%v, want done=%v failure=%v", done, err, tc.done, tc.failure)
+			}
+		})
+	}
+}
+
+// waitOpts is fakeOpts with the dynamic client exposed so a test can play
+// the operator.
+func waitOpts(db *unstructured.Unstructured) (*GlobalOptions, *dynamicfake.FakeDynamicClient) {
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{k8s.DBClusterGVR: "DBClusterList"}, db)
+	return &GlobalOptions{Output: output.OutputTable, Yes: true, Timeout: 5 * time.Second,
+		NewClients: func() (*k8s.Clients, error) {
+			return &k8s.Clients{Dynamic: dyn, Namespace: "default", Context: "test-ctx"}, nil
+		}}, dyn
+}
+
+func TestClusterScaleWaitsForOperator(t *testing.T) {
+	db := sizedCluster("my-db")
+	db.SetGeneration(2) // the fake does not bump generation on patch
+	readyStatus(db, 1, nil)
+	opts, dyn := waitOpts(db)
+
+	// Play the operator: once the patch lands, report generation 2 Ready.
+	go func() {
+		for {
+			cur, err := dyn.Resource(k8s.DBClusterGVR).Namespace("default").Get(t.Context(), "my-db", metav1.GetOptions{})
+			if err != nil {
+				return
+			}
+			if cpu, _, _ := unstructured.NestedInt64(cur.Object, "spec", "primarySpec", "resources", "cpu"); cpu == 4 {
+				_ = unstructured.SetNestedField(cur.Object, "DBClusterReconciling", "status", "phase")
+				_, _ = dyn.Resource(k8s.DBClusterGVR).Namespace("default").Update(t.Context(), cur, metav1.UpdateOptions{})
+				readyStatus(cur, 2, map[string]any{"cpu": int64(4)})
+				_, _ = dyn.Resource(k8s.DBClusterGVR).Namespace("default").Update(t.Context(), cur, metav1.UpdateOptions{})
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	var out, errOut bytes.Buffer
+	if err := runClusterScale(scaleCmd(&out, &errOut, ""), opts, "my-db", scaleFlags{cpu: "4", standbys: -1, wait: true}); err != nil {
+		t.Fatalf("%v\nstderr:\n%s", err, errOut.String())
+	}
+	if !strings.Contains(out.String(), `Scaled cluster "my-db"`) {
+		t.Errorf("want completion message, got %q", out.String())
+	}
+	// Which intermediate phases show depends on timing; the final one always does.
+	if !strings.Contains(errOut.String(), "Waiting for cluster") || !strings.Contains(errOut.String(), "my-db: DBClusterReady") {
+		t.Errorf("want wait progress on stderr, got:\n%s", errOut.String())
+	}
+}
+
+func TestClusterScaleWaitTimesOut(t *testing.T) {
+	db := sizedCluster("my-db")
+	db.SetGeneration(2)
+	readyStatus(db, 1, nil) // the operator never catches up
+	opts, _ := waitOpts(db)
+	opts.Timeout = 300 * time.Millisecond
+
+	var out, errOut bytes.Buffer
+	err := runClusterScale(scaleCmd(&out, &errOut, ""), opts, "my-db", scaleFlags{cpu: "4", standbys: -1, wait: true})
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "the change is applied") {
+		t.Fatalf("want a timeout that says the change is applied, got %v", err)
+	}
+}
+
+func TestClusterScaleNoWaitFlag(t *testing.T) {
+	opts := fakeOpts(output.OutputTable, sizedCluster("my-db"))
+	opts.Yes = true
+	cmd := newClusterScaleCommand(opts)
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"my-db", "--cpu", "4", "--no-wait"})
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(errOut.String(), "Waiting") || !strings.Contains(out.String(), "Check progress") {
+		t.Errorf("--no-wait should return at once; out=%q err=%q", out.String(), errOut.String())
+	}
+	cmd = newClusterScaleCommand(opts)
+	cmd.SetArgs([]string{"my-db", "--cpu", "4", "--wait", "--no-wait"})
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	if err := cmd.ExecuteContext(t.Context()); err == nil {
+		t.Error("--wait and --no-wait together should fail")
 	}
 }
