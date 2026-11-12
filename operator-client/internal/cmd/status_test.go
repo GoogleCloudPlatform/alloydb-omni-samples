@@ -82,6 +82,29 @@ func TestRootRegistersStatus(t *testing.T) {
 	t.Fatal("status should be registered on the root command")
 }
 
+// A sparse spec must still read cleanly: unset numbers show as "?", never as
+// Go's "<nil>".
+func TestStatusUnknownResourcesReadAsQuestionMarks(t *testing.T) {
+	db := statusFixture()
+	if err := unstructured.SetNestedMap(db.Object, map[string]any{
+		"disks": []any{map[string]any{"name": "DataDisk"}}, // no size
+	}, "spec", "primarySpec", "resources"); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := &GlobalOptions{Output: output.OutputTable, NewClients: statusClients(db)}
+	out, err := runStatusCmd(t, opts, "my-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "<nil>") {
+		t.Fatalf("missing fields must not print as Go nils:\n%s", out)
+	}
+	if !strings.Contains(out, "? CPU, ? memory, ? disk") {
+		t.Fatalf("unset resources should all read as ?:\n%s", out)
+	}
+}
+
 func TestStatusHealthyCluster(t *testing.T) {
 	opts := &GlobalOptions{Output: output.OutputTable, NewClients: statusClients(statusFixture())}
 	out, err := runStatusCmd(t, opts, "my-db")
