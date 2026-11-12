@@ -8,6 +8,9 @@
 #
 #   ADBO=./adbo NAMESPACE=omni-test VERSION=18.3.0 ./hack/e2e.sh
 #
+# WAIT_TIMEOUT is the seconds to allow for any one phase change. The default
+# suits a warm cluster; raise it where the Omni images still have to be pulled.
+#
 # Creates a uniquely named cluster, exercises every verb, and removes it again.
 # Existing clusters are never touched.
 set -euo pipefail
@@ -16,6 +19,7 @@ ADBO="${ADBO:-adbo}"
 NAMESPACE="${NAMESPACE:-default}"
 VERSION="${VERSION:-}"
 CLUSTER="${CLUSTER:-adbo-e2e-$$}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
 SECRET="db-pw-${CLUSTER}"
 
 if [[ -z "$VERSION" ]]; then
@@ -49,26 +53,31 @@ phase() { kubectl get dbcluster "$CLUSTER" -n "$NAMESPACE" -o jsonpath='{.status
 # be DBClusterReconciling a second later. Asserting the phase the instant a
 # wait returns is therefore racy, so settle on it instead of sampling once.
 await_phase() {
-  local want="$1" deadline=$((SECONDS + 120))
+  local want="$1" deadline=$((SECONDS + WAIT_TIMEOUT))
   while [[ $SECONDS -lt $deadline ]]; do
     [[ "$(phase)" == "$want" ]] && return 0
     sleep 3
   done
-  fail "phase is $(phase), want $want"
+  fail "phase is $(phase) after ${WAIT_TIMEOUT}s, want $want (raise WAIT_TIMEOUT if the cluster is just slow)"
 }
 is_stopped() { kubectl get dbcluster "$CLUSTER" -n "$NAMESPACE" -o jsonpath='{.spec.primarySpec.isStopped}' 2>/dev/null; }
+# These two return empty rather than failing: under `set -e` a non-zero exit
+# inside "$(...)" aborts the script at the assignment, before the caller can
+# report what was actually missing.
 secret_password() {
-  kubectl get secret "$SECRET" -n "$NAMESPACE" -o json 2>/dev/null |
-    python3 -c "import sys,json,base64; d=json.load(sys.stdin)['data']; print(base64.b64decode(d['$CLUSTER']).decode())"
+  kubectl get secret "$SECRET" -n "$NAMESPACE" \
+    -o go-template="{{index .data \"$CLUSTER\" | base64decode}}" 2>/dev/null || true
 }
 db_pod() {
-  kubectl get pods -n "$NAMESPACE" -o name 2>/dev/null | grep -- "-${CLUSTER}-" | grep -v -- '-nm-' | head -1 | sed 's|pod/||'
+  kubectl get pods -n "$NAMESPACE" -o name 2>/dev/null |
+    grep -- "-${CLUSTER}-" | grep -v -- '-nm-' | head -1 | sed 's|pod/||' || true
 }
 # Proves the password in the secret actually authenticates, which is the one
 # thing the operator has to agree with us about.
 check_login() {
   local pw pod
   pw="$(secret_password)"
+  [[ -n "$pw" ]] || fail "no password under key '$CLUSTER' in secret $SECRET"
   pod="$(db_pod)"
   [[ -n "$pod" ]] || fail "no database pod found for $CLUSTER"
   kubectl exec -n "$NAMESPACE" "$pod" -c database -- \
@@ -96,8 +105,8 @@ ok "phase is DBClusterReady"
 
 # The operator reads the admin password from a key named after the cluster,
 # not "password". Getting this wrong leaves a cluster that never starts.
-key="$(kubectl get secret "$SECRET" -n "$NAMESPACE" -o json | python3 -c 'import sys,json; print(",".join(json.load(sys.stdin)["data"]))')"
-[[ "$key" == "$CLUSTER" ]] || fail "secret key is '$key', want '$CLUSTER'"
+keys="$(kubectl get secret "$SECRET" -n "$NAMESPACE" -o go-template='{{range $k, $v := .data}}{{println $k}}{{end}}')"
+[[ "$keys" == "$CLUSTER" ]] || fail "secret keys are '${keys//$'\n'/,}', want just '$CLUSTER'"
 ok "secret key is the cluster name"
 
 ref="$(kubectl get dbcluster "$CLUSTER" -n "$NAMESPACE" -o jsonpath='{.spec.primarySpec.adminUser.passwordRef.name}')"
