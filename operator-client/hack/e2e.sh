@@ -42,6 +42,12 @@ cleanup() {
     "$ADBO" cluster delete "$CLUSTER" -y -n "$NAMESPACE" >/dev/null 2>&1 || true
   fi
   kubectl delete secret "$SECRET" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  # The operator's own per-cluster TLS secrets (dbs-al-ca-*, dbs-al-cert-*)
+  # carry no ownerReferences, so nothing collects them when the DBCluster goes
+  # and they pile up one set per run. They are labelled with the cluster name,
+  # which is unique to this run, so this cannot reach another cluster's.
+  kubectl delete secrets -n "$NAMESPACE" \
+    -l "alloydbomni.internal.dbadmin.goog/dbcluster=$CLUSTER" >/dev/null 2>&1 || true
   [[ $rc -eq 0 ]] && printf '\nPASS: every verb behaved against the live operator\n'
   exit $rc
 }
