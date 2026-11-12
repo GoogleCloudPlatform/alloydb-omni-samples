@@ -223,6 +223,9 @@ func TestClusterPowerDryRunDoesNotWait(t *testing.T) {
 		{"start", true, newClusterStartCommand},
 	} {
 		opts, _, _ := crudFakes(t, []runtime.Object{poweredDBCluster("my-db", "DBClusterReady", tc.stopped)})
+		// No auto-confirm and no stdin: a dry run that prompted would fail
+		// here, which is what should happen to one in a script.
+		opts.Yes = false
 		out, err := runCRUDCmd(t, tc.build(opts), "my-db", "--dry-run")
 		if err != nil {
 			t.Fatalf("%s: %v", tc.verb, err)
