@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -149,14 +150,21 @@ func waitForClusterGoneIf(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Client
 		case apierrors.IsNotFound(err):
 			fmt.Fprintf(out, "Cluster %q is gone.\n", name)
 			return nil
+		case ctx.Err() != nil:
+			// --timeout is the only deadline in play, so anything else is a
+			// Ctrl+C: reporting a timeout there would be the wrong story.
+			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return ctx.Err()
+			}
+			return fmt.Errorf("timed out after %s waiting for cluster %q to finish deleting; the operator may still be running finalizers (kubectl get dbcluster %s -n %s)",
+				opts.Timeout, name, name, c.Namespace)
 		case err != nil:
 			return c.FormatErr(err)
 		}
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timed out after %s waiting for cluster %q to finish deleting; the operator may still be running finalizers (kubectl get dbcluster %s -n %s)",
-				opts.Timeout, name, name, c.Namespace)
+			// Round the loop once more so the switch above says why we stopped.
 		case <-time.After(deleteGonePollInterval):
 		}
 	}

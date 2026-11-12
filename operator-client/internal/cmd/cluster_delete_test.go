@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -264,6 +265,40 @@ func TestClusterDeleteWaitTimesOut(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("timeout error missing %q: %v", want, err)
 		}
+	}
+}
+
+// A Ctrl+C during the wait must surface as a cancellation, not as a timeout:
+// with --timeout 0 there is no deadline, so "timed out after 0s" would be a lie.
+func TestClusterDeleteWaitInterruptIsNotATimeout(t *testing.T) {
+	shortPolling(t)
+	opts, dyn, _ := crudFakes(t,
+		[]runtime.Object{testDBCluster("my-db", "DBClusterReady")},
+		adminSecretFor("my-db"))
+	opts.Timeout = 0
+
+	dyn.PrependReactor("get", "dbclusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, testDBCluster("my-db", "DBClusterDeleting"), nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	var buf bytes.Buffer
+	cmd := newClusterDeleteCommand(opts)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"my-db", "--wait"})
+	err := cmd.ExecuteContext(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("an interrupted wait should return context.Canceled, got %v", err)
+	}
+	if strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("an interrupt must not be reported as a timeout: %v", err)
 	}
 }
 
