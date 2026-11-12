@@ -154,7 +154,8 @@ func readStatusView(db *unstructured.Unstructured) statusView {
 
 	disk := "?"
 	if disks, _, _ := unstructured.NestedSlice(db.Object, "spec", "primarySpec", "resources", "disks"); len(disks) > 0 {
-		if d, ok := disks[0].(map[string]any); ok {
+		// Same guard as quantity: an absent size must not print as "<nil>".
+		if d, ok := disks[0].(map[string]any); ok && d["size"] != nil {
 			disk = fmt.Sprint(d["size"])
 		}
 	}
