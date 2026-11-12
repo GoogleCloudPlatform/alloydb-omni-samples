@@ -302,6 +302,23 @@ func TestClusterCreateRollsBackSecretWhenClusterFails(t *testing.T) {
 	}
 }
 
+// A Ctrl+C mid-create cancels the command's context, but the secret still has
+// to go: an orphan blocks the retry. The fake clients ignore contexts, so this
+// checks the context rollback actually runs on rather than the delete itself.
+func TestCleanupContextOutlivesACancelledCommand(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cleanup, done := cleanupContext(ctx)
+	defer done()
+	if err := cleanup.Err(); err != nil {
+		t.Fatalf("cleanup must outlive the cancelled command, got %v", err)
+	}
+	if _, ok := cleanup.Deadline(); !ok {
+		t.Fatal("cleanup needs a deadline so a wedged API server cannot hang the command")
+	}
+}
+
 func TestClusterCreateAlreadyExists(t *testing.T) {
 	existing := testDBCluster("my-db", clusterReadyPhase)
 	opts, _, _ := crudFakes(t, []runtime.Object{existing})

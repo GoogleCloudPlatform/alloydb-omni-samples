@@ -41,6 +41,10 @@ const (
 // status.phase, so a phase watch never sees it. A variable so tests do not sleep.
 var incidentPollInterval = 10 * time.Second
 
+// rollbackTimeout bounds the secret cleanup that runs after a failed create.
+// A variable so tests do not wait on it.
+var rollbackTimeout = 10 * time.Second
+
 // waitForClusterPhase blocks until the cluster's status.phase reaches
 // wantPhase. Shared by create, stop and start.
 //
@@ -207,12 +211,24 @@ func orUnknownPhase(phase string) string {
 // create failed. An orphan secret blocks the user's own retry when they pass
 // --password, so if it cannot be removed, say exactly how to remove it.
 func rollbackSecret(ctx context.Context, cmd *cobra.Command, c *k8s.Clients, secretName string) {
+	ctx, cancel := cleanupContext(ctx)
+	defer cancel()
+
 	if err := deleteSecretWithRetry(ctx, c, secretName); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(),
 			"warning: the cluster was not created and the secret %q could not be removed: %v\n"+
 				"Remove it before retrying with --password: kubectl delete secret %s -n %s\n",
 			secretName, err, secretName, c.Namespace)
 	}
+}
+
+// cleanupContext returns a context fit for undoing work after a command has
+// already failed. One common reason for that failure is a Ctrl+C, which leaves
+// the command's context cancelled: cleaning up on it would fail instantly and
+// strand the secret. So detach from the cancellation, but keep a deadline, or
+// a wedged API server would hang the command on its way out.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 }
 
 // deleteSecretWithRetry tries twice, since the usual cause of failure here is
