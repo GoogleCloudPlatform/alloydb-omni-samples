@@ -393,12 +393,8 @@ func ensureAdminSecret(ctx context.Context, c *k8s.Clients, cluster, password st
 		// The operator reads the password from a key named after the cluster.
 		// An empty value is as broken as a missing one: the cluster would come
 		// up with no usable admin password.
+		// Only Data is ever populated on a read: StringData is write-only.
 		value, ok := existing.Data[cluster]
-		if !ok {
-			if v, strOK := existing.StringData[cluster]; strOK {
-				value, ok = []byte(v), true
-			}
-		}
 		switch {
 		case !ok:
 			return false, fmt.Errorf("secret %q exists but has no %q key; the operator reads the password from that key",
