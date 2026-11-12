@@ -109,8 +109,9 @@ func runClusterPower(cmd *cobra.Command, opts *GlobalOptions, name string, op po
 		return nil
 	}
 
-	// Stopping drops every connection, so confirm it. Starting is additive.
-	if op.stop {
+	// Stopping drops every connection, so confirm it. Starting is additive,
+	// and a dry run changes nothing, so neither of those asks.
+	if op.stop && !op.dryRun {
 		ok, err := opts.Confirm(cmd, fmt.Sprintf(
 			"Stop cluster %q in namespace %q? Open connections will be dropped; data is kept.", name, c.Namespace))
 		if err != nil {
