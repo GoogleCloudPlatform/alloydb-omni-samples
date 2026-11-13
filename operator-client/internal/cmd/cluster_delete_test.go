@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -78,6 +79,18 @@ func runCRUDCmd(t *testing.T, cmd *cobra.Command, args ...string) (string, error
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	return buf.String(), err
+}
+
+// runCRUDCmdSplit keeps the streams apart, for the commands that put a
+// machine-readable document on stdout and their commentary on stderr.
+func runCRUDCmdSplit(t *testing.T, cmd *cobra.Command, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(args)
+	err = cmd.Execute()
+	return out.String(), errOut.String(), err
 }
 
 // shortPolling makes the delete waiter spin fast so tests stay quick.
@@ -170,11 +183,13 @@ func TestClusterDeleteAsksForConfirmation(t *testing.T) {
 	cmd := newClusterDeleteCommand(opts)
 	cmd.SetIn(strings.NewReader("n\n"))
 	out, err := runCRUDCmd(t, cmd, "my-db")
-	if err != nil {
-		t.Fatal(err)
+	// A script that forgets -y reads EOF here, which answers no. That has to
+	// be a non-zero exit, or the script carries on as if the delete happened.
+	if !errors.Is(err, errDeclined) {
+		t.Fatalf("answering no should fail the command, got %v", err)
 	}
-	if !strings.Contains(out, "Cancelled; nothing deleted.") {
-		t.Fatalf("answering no should cancel:\n%s", out)
+	if !strings.Contains(err.Error(), "nothing was deleted") {
+		t.Fatalf("the error should say nothing happened: %v", err)
 	}
 	if !clusterExists(t, opts, "my-db") {
 		t.Fatal("a cancelled delete must not remove the cluster")
@@ -187,6 +202,53 @@ func TestClusterDeleteAsksForConfirmation(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestClusterDeleteDoesNotMistakeMissingCRDsForAMissingCluster(t *testing.T) {
+	// A cluster without the Omni CRDs answers every Get with a 404, so a bare
+	// IsNotFound check sends the user hunting for a typo in a name that could
+	// not have existed. k8s.Format has the right message; let it through.
+	opts, dyn, _ := crudFakes(t, nil)
+	dyn.PrependReactor("get", "dbclusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewGenericServerResponse(404, "get",
+			k8s.DBClusterGVR.GroupResource(), "", "the server could not find the requested resource", 0, false)
+	})
+
+	_, err := runCRUDCmd(t, newClusterDeleteCommand(opts), "my-db")
+	if err == nil {
+		t.Fatal("a missing CRD should fail the command")
+	}
+	if !strings.Contains(err.Error(), "CRDs are not installed") {
+		t.Fatalf("error should name the real problem, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "use -n to look in another namespace") {
+		t.Fatalf("a missing CRD is not a mistyped name: %v", err)
+	}
+}
+
+func TestClusterDeleteJSONSummaryKeepsStdoutParseable(t *testing.T) {
+	opts, _, _ := crudFakes(t,
+		[]runtime.Object{testDBCluster("my-db", "DBClusterReady")},
+		adminSecretFor("my-db"))
+	opts.Output = output.OutputJSON
+
+	stdout, stderr, err := runCRUDCmdSplit(t, newClusterDeleteCommand(opts), "my-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("-o json should leave stdout parseable: %v\nstdout: %s", err, stdout)
+	}
+	// delete waits by default, so a successful run reports the cluster gone.
+	if got["name"] != "my-db" || got["namespace"] != testNamespace ||
+		got["secretAction"] != "deleted" || got["gone"] != true {
+		t.Fatalf("summary = %v", got)
+	}
+	// The prose still has to reach the user, just not on stdout.
+	if !strings.Contains(stderr, "Deleting cluster") {
+		t.Fatalf("commentary should go to stderr:\n%s", stderr)
 	}
 }
 

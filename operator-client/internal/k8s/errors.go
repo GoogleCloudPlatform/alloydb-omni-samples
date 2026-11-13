@@ -35,7 +35,7 @@ func Format(err error, ns, kubeContext string) error {
 	}
 	where := location(ns, kubeContext)
 	switch {
-	case apierrors.IsNotFound(err) && strings.Contains(err.Error(), "the server could not find the requested resource"):
+	case apierrors.IsNotFound(err) && strings.Contains(err.Error(), missingCRDMarker):
 		return wrap(fmt.Sprintf("AlloyDB Omni CRDs are not installed on this cluster%s: %s", where, err), err)
 	case apierrors.IsNotFound(err):
 		return wrap(fmt.Sprintf("not found%s: check the name, -n, and --context: %s", where, err), err)
@@ -57,11 +57,37 @@ func Format(err error, ns, kubeContext string) error {
 	switch {
 	case strings.Contains(msg, "failed calling webhook"):
 		return wrap(fmt.Sprintf("operator webhook is not ready (is cert-manager running?): %s", err), err)
-	case strings.Contains(msg, "the server could not find the requested resource"):
+	case strings.Contains(msg, missingCRDMarker):
 		return wrap(fmt.Sprintf("AlloyDB Omni CRDs are not installed on this cluster%s: %s", where, err), err)
 	default:
 		return err
 	}
+}
+
+// missingCRDMarker is how the API server answers a request for a resource type
+// it does not serve. Format turns it into a message about the CRDs.
+const missingCRDMarker = "the server could not find the requested resource"
+
+// IsObjectNotFound reports whether err is a 404 for a named object, rather
+// than for its whole resource type.
+//
+// A cluster without the AlloyDB Omni CRDs answers every Get with a 404 too, so
+// a command that checks apierrors.IsNotFound by itself will report "no such
+// cluster" on a cluster where no cluster could exist. Format has the better
+// message for that; commands should only claim an object is missing when this
+// returns true, and hand everything else to Format.
+func IsObjectNotFound(err error) bool {
+	return apierrors.IsNotFound(err) && !strings.Contains(err.Error(), missingCRDMarker)
+}
+
+// Where names the namespace and context a command looked in, for messages
+// written by commands rather than translated by Format. Empty values are left
+// out, so nothing prints (context "").
+func (c *Clients) Where() string {
+	if c == nil {
+		return ""
+	}
+	return location(c.Namespace, c.Context)
 }
 
 // FormatErr is Format using the client's namespace and context.
