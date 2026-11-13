@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,11 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 )
-
-// haReadyConditionType is the condition the operator sets once the standbys
-// have caught up and a failover would not lose data.
-const haReadyConditionType = "HAReady"
 
 // haReadyPollInterval is how often the HA wait re-reads the cluster.
 // A variable so tests do not sleep.
@@ -25,6 +23,7 @@ var haReadyPollInterval = 5 * time.Second
 
 func newClusterRestartCommand(opts *GlobalOptions) *cobra.Command {
 	var forceConflicts, noWait bool
+	wait := true
 
 	cmd := &cobra.Command{
 		Use:   "restart [CLUSTER_NAME]",
@@ -40,10 +39,10 @@ func newClusterRestartCommand(opts *GlobalOptions) *cobra.Command {
 			"  adbo cluster restart my-db --force-conflicts",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if noWait {
-				return errors.New("restart cannot run with --no-wait: it has to wait for the stop " +
+			if noWait || !wait {
+				return errors.New("restart cannot return early: it has to wait for the stop " +
 					"before it can ask for the start.\nRun `adbo cluster stop CLUSTER_NAME --no-wait` " +
-					"if returning early is what you want")
+					"if that is what you want")
 			}
 			name, err := opts.ClusterName(args)
 			if err != nil {
@@ -55,11 +54,17 @@ func newClusterRestartCommand(opts *GlobalOptions) *cobra.Command {
 
 	cmd.Flags().BoolVar(&forceConflicts, "force-conflicts", false,
 		"restart even if the cluster was edited since adbo read it, instead of failing on the conflict")
-	// --no-wait is registered only to be refused. Every other long-running
-	// verb takes it, so it will be typed here; catching it turns cobra's bare
-	// "unknown flag" into an explanation. Hidden, since it never succeeds.
+	// Every other long-running verb takes --wait and --no-wait, so both will
+	// be typed here. --wait is what restart already does, so accept it;
+	// --no-wait cannot be honoured, so refuse it with an explanation rather
+	// than cobra's bare "unknown flag". Both are hidden: one is redundant and
+	// the other never succeeds.
+	cmd.Flags().BoolVar(&wait, "wait", true, "always true for restart: both halves are waited for")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "not supported by restart")
-	_ = cmd.Flags().MarkHidden("no-wait")
+	cmd.MarkFlagsMutuallyExclusive("wait", "no-wait")
+	for _, f := range []string{"wait", "no-wait"} {
+		_ = cmd.Flags().MarkHidden(f)
+	}
 	return cmd
 }
 
@@ -68,7 +73,7 @@ func runClusterRestart(cmd *cobra.Command, opts *GlobalOptions, name string, for
 	if err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
+	out := opts.Prose(cmd)
 
 	// One budget for the whole restart. waitForClusterPhase derives its own
 	// context from this one and the earlier deadline wins, so a --timeout of
@@ -78,9 +83,10 @@ func runClusterRestart(cmd *cobra.Command, opts *GlobalOptions, name string, for
 
 	db, err := c.In(k8s.DBClusterGVR).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return fmt.Errorf("cluster %q not found in namespace %q (context %q); use -n to look in another namespace",
-				name, c.Namespace, c.Context)
+		// A cluster with no Omni CRDs answers every Get with a 404 too, and
+		// FormatErr has the message for that; only an object 404 is a typo.
+		if k8s.IsObjectNotFound(err) {
+			return fmt.Errorf("cluster %q not found%s; use -n to look in another namespace", name, c.Where())
 		}
 		return c.FormatErr(err)
 	}
@@ -97,8 +103,7 @@ func runClusterRestart(cmd *cobra.Command, opts *GlobalOptions, name string, for
 			return err
 		}
 		if !ok {
-			fmt.Fprintln(out, "Cancelled; the cluster is untouched.")
-			return nil
+			return fmt.Errorf("%w; the cluster is untouched", errDeclined)
 		}
 		if err := patchIsStopped(ctx, c, db, true, forceConflicts); err != nil {
 			return fmt.Errorf("requesting stop of %q: %w", name, err)
@@ -136,12 +141,34 @@ func runClusterRestart(cmd *cobra.Command, opts *GlobalOptions, name string, for
 	// Ready is not yet highly available: the standbys replay what they missed
 	// only after the primary is serving again.
 	if standbys > 0 {
-		if err := waitForHAReady(ctx, cmd, c, name); err != nil {
+		if err := waitForHAReady(ctx, cmd, opts, c, name); err != nil {
 			return err
 		}
 	}
-	fmt.Fprintf(out, "Restarted cluster %q in %s.\n", name, time.Since(began).Round(time.Second))
-	return nil
+	took := time.Since(began).Round(time.Second)
+	fmt.Fprintf(out, "Restarted cluster %q in %s.\n", name, took)
+	if !opts.Structured() {
+		return nil
+	}
+	return output.Print(cmd.OutOrStdout(), opts.Output, output.Table{}, restartedCluster{
+		Name:      name,
+		Namespace: c.Namespace,
+		Phase:     clusterReadyPhase,
+		Standbys:  standbys,
+		HAReady:   standbys > 0,
+		Seconds:   int(took.Seconds()),
+	})
+}
+
+// restartedCluster is what restart did, for -o json/yaml. HAReady is only
+// meaningful with standbys: without them the operator posts no such condition.
+type restartedCluster struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Phase     string `json:"phase"`
+	Standbys  int64  `json:"standbys"`
+	HAReady   bool   `json:"haReady"`
+	Seconds   int    `json:"seconds"`
 }
 
 // restartPrompt is the downtime warning. HA clusters also hear about
@@ -156,8 +183,12 @@ func restartPrompt(name, namespace string, standbys int64) string {
 		if standbys == 1 {
 			noun = "standby"
 		}
-		prompt += fmt.Sprintf("\nThis cluster has %d %s: `adbo switchover %s` moves the primary onto one of them with far less downtime.",
-			standbys, noun, name)
+		// Deliberately not naming a command: a switchover is the cheaper
+		// option here, but `adbo switchover` has not landed, and sending the
+		// user to a command that answers "unknown command" is worse than
+		// telling them what to look for.
+		prompt += fmt.Sprintf("\nThis cluster has %d %s, so a switchover would move the primary onto one of them with far less downtime.",
+			standbys, noun)
 	}
 	return prompt
 }
@@ -199,11 +230,12 @@ func stillStopped(err error, name string) error {
 // finish, a failover would lose data. The operator reports that in the
 // HAReady condition, which does not move status.phase, so this polls rather
 // than watching the phase like the waits above.
-func waitForHAReady(ctx context.Context, cmd *cobra.Command, c *k8s.Clients, name string) error {
-	out := cmd.OutOrStdout()
+func waitForHAReady(ctx context.Context, cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, name string) error {
+	out, errOut := opts.Prose(cmd), cmd.ErrOrStderr()
 	fmt.Fprintf(out, "Cluster %q is serving; waiting for its standbys to catch up.\n", name)
 
 	var lastReason string
+	var incidents, unschedulable int
 	for {
 		db, err := c.In(k8s.DBClusterGVR).Get(ctx, name, metav1.GetOptions{})
 		switch {
@@ -214,13 +246,41 @@ func waitForHAReady(ctx context.Context, cmd *cobra.Command, c *k8s.Clients, nam
 				return nil
 			}
 			if reason != "" && reason != lastReason {
-				fmt.Fprintf(cmd.ErrOrStderr(), "  %s: HA not ready yet (%s)\n", name, reason)
+				fmt.Fprintf(errOut, "  %s: HA not ready yet (%s)\n", name, reason)
 				lastReason = reason
 			}
-		case ctx.Err() == nil:
-			// A read that failed on its own, rather than because the wait is
-			// over; the select below reports the end of the wait.
+			// A standby that cannot start is the likeliest reason HA never
+			// comes back, and without these checks it would sit here until
+			// --timeout. Same strike counts as the phase wait: the operator
+			// posts incidents it withdraws, and a pod is briefly Pending
+			// during every normal start.
+			if msgs := fatalIncidentMessages(db); len(msgs) > 0 {
+				incidents++
+				if incidents >= incidentStrikes {
+					return fmt.Errorf("cluster %q is serving, but HA did not come back and the operator reports:\n  - %s",
+						name, strings.Join(msgs, "\n  - "))
+				}
+			} else {
+				incidents = 0
+			}
+			switch msg := schedulingFailure(ctx, c, name); msg {
+			case "":
+				unschedulable = 0
+			default:
+				unschedulable++
+				if unschedulable >= unschedulableStrikes {
+					return fmt.Errorf("cluster %q is serving, but a standby pod cannot be scheduled: %s\n"+
+						"Free capacity on the cluster, or run with fewer standbys", name, msg)
+				}
+			}
+		case apierrors.IsNotFound(err):
+			// Someone deleted the cluster from under the restart.
 			return c.FormatErr(err)
+		case ctx.Err() == nil:
+			// Any other read failure is likely transient, and the database is
+			// already serving: a blip here should not turn a finished restart
+			// into a failed command.
+			fmt.Fprintf(errOut, "  %s: could not read the cluster, retrying (%v)\n", name, c.FormatErr(err))
 		}
 
 		select {
@@ -238,23 +298,4 @@ func waitForHAReady(ctx context.Context, cmd *cobra.Command, c *k8s.Clients, nam
 		case <-time.After(haReadyPollInterval):
 		}
 	}
-}
-
-// haReadyCondition reads the HAReady condition's status and reason, both
-// empty when the operator has not posted the condition at all.
-func haReadyCondition(db *unstructured.Unstructured) (status, reason string) {
-	conds, _, _ := unstructured.NestedSlice(db.Object, "status", "conditions")
-	for _, it := range conds {
-		m, ok := it.(map[string]any)
-		if !ok {
-			continue
-		}
-		if t, _ := m["type"].(string); t != haReadyConditionType {
-			continue
-		}
-		status, _ = m["status"].(string)
-		reason, _ = m["reason"].(string)
-		return status, reason
-	}
-	return "", ""
 }

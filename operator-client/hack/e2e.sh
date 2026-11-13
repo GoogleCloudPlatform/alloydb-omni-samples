@@ -174,16 +174,16 @@ ok "the same password still authenticates after a stop/start round trip"
 say "restart refuses --no-wait"
 # A restart has to wait for the stop before it can ask for the start, so the
 # flag every sibling verb accepts is refused here rather than ignored.
-! out="$("$ADBO" cluster restart "$CLUSTER" -y -n "$NAMESPACE" --no-wait 2>&1)" ||
+! out="$("$ADBO" cluster restart "$CLUSTER" -y -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}" --no-wait 2>&1)" ||
   fail "restart --no-wait should have failed, got: $out"
-grep -q 'cannot run with --no-wait' <<<"$out" || fail "expected an explanation, got: $out"
+grep -q 'cannot return early' <<<"$out" || fail "expected an explanation, got: $out"
 [[ "$(is_stopped)" == "false" ]] || fail "a refused restart changed isStopped"
 ok "refused, cluster untouched"
 
 say "restart (one command: stop, wait, start, wait)"
 before="$(db_pod_uid)"
 [[ -n "$before" ]] || fail "no database pod to restart"
-time "$ADBO" cluster restart "$CLUSTER" -y -n "$NAMESPACE"
+time "$ADBO" cluster restart "$CLUSTER" -y -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}"
 [[ "$(is_stopped)" == "false" ]] || fail "isStopped is '$(is_stopped)' after a restart, want false"
 await_phase DBClusterReady
 # Without this the test would pass on a restart that never stopped anything:
@@ -199,9 +199,9 @@ ok "the same password still authenticates after a restart"
 say "restart finishes an interrupted run (stopped cluster: start only)"
 # A restart that dies between its halves leaves the cluster stopped; running it
 # again is how the user recovers, so it must not ask to stop an idle cluster.
-"$ADBO" cluster stop "$CLUSTER" -y -n "$NAMESPACE" >/dev/null
+"$ADBO" cluster stop "$CLUSTER" -y -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}" >/dev/null
 await_phase DBClusterStopped
-out="$("$ADBO" cluster restart "$CLUSTER" -y -n "$NAMESPACE")"
+out="$("$ADBO" cluster restart "$CLUSTER" -y -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}")"
 grep -q 'already stopped' <<<"$out" || fail "expected restart to skip the stop, got: $out"
 [[ "$(is_stopped)" == "false" ]] || fail "isStopped is '$(is_stopped)', want false"
 await_phase DBClusterReady

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 )
 
 // phaseFollowsIsStopped makes the fake behave like the operator for the one
@@ -162,7 +164,7 @@ func TestClusterRestartAsksBeforeTakingTheClusterDown(t *testing.T) {
 		{"no standbys", 0, []string{"my-db", testNamespace, "down until it is ready", "data is kept"}},
 		// An HA cluster has somewhere to move the primary, so the prompt
 		// should offer the cheaper option before the user says yes.
-		{"with standbys", 2, []string{"2 standbys", "adbo switchover my-db", "less downtime"}},
+		{"with standbys", 2, []string{"2 standbys", "switchover", "less downtime"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := poweredDBCluster("my-db", clusterReadyPhase, false)
@@ -177,11 +179,8 @@ func TestClusterRestartAsksBeforeTakingTheClusterDown(t *testing.T) {
 			cmd := newClusterRestartCommand(opts)
 			cmd.SetIn(strings.NewReader("n\n"))
 			out, err := runCRUDCmd(t, cmd, "my-db")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(out, "Cancelled; the cluster is untouched.") {
-				t.Fatalf("answering no should cancel:\n%s", out)
+			if !errors.Is(err, errDeclined) {
+				t.Fatalf("answering no should fail the command, got %v", err)
 			}
 			if len(patchBodies(dyn)) != 0 {
 				t.Fatal("a cancelled restart must not touch the cluster")
@@ -190,6 +189,11 @@ func TestClusterRestartAsksBeforeTakingTheClusterDown(t *testing.T) {
 				if !strings.Contains(out, want) {
 					t.Fatalf("prompt missing %q:\n%s", want, out)
 				}
+			}
+			// `adbo switchover` does not exist yet; naming it would send the
+			// user to "unknown command".
+			if strings.Contains(out, "adbo switchover") {
+				t.Fatalf("the prompt should not name an unlanded command:\n%s", out)
 			}
 		})
 	}
@@ -307,7 +311,7 @@ func TestClusterRestartWaitsForHAReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := waitForHAReady(context.Background(), waitTestCmd(&buf), c, "my-db"); err != nil {
+	if err := waitForHAReady(context.Background(), waitTestCmd(&buf), opts, c, "my-db"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "HA-ready again") {
@@ -326,7 +330,7 @@ func TestClusterRestartHAWaitTimeoutSaysTheClusterIsServing(t *testing.T) {
 	defer cancel()
 
 	var buf bytes.Buffer
-	err = waitForHAReady(ctx, waitTestCmd(&buf), c, "my-db")
+	err = waitForHAReady(ctx, waitTestCmd(&buf), opts, c, "my-db")
 	if err == nil {
 		t.Fatal("standbys that never catch up should time out")
 	}
@@ -353,12 +357,143 @@ func TestClusterRestartHAWaitInterruptIsNotATimeout(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	err = waitForHAReady(ctx, waitTestCmd(&buf), c, "my-db")
+	err = waitForHAReady(ctx, waitTestCmd(&buf), opts, c, "my-db")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("a Ctrl+C should surface as a cancellation, got %v", err)
 	}
 	if strings.Contains(fmt.Sprint(err), "--timeout") {
 		t.Fatalf("a cancelled wait must not be reported as a timeout: %v", err)
+	}
+}
+
+func TestClusterRestartAcceptsWaitButRefusesTheOpposite(t *testing.T) {
+	// Every sibling verb takes --wait, so it gets typed here too. It is what
+	// restart already does, so it should work rather than read as a typo;
+	// asking for the opposite, either way round, cannot be honoured.
+	opts, dyn, _ := crudFakes(t, []runtime.Object{poweredDBCluster("my-db", clusterReadyPhase, false)})
+	phaseFollowsIsStopped(dyn, "my-db")
+	if _, err := runCRUDCmd(t, newClusterRestartCommand(opts), "my-db", "--wait"); err != nil {
+		t.Fatalf("--wait is what restart does anyway: %v", err)
+	}
+
+	for _, args := range [][]string{{"my-db", "--no-wait"}, {"my-db", "--wait=false"}} {
+		o, d, _ := crudFakes(t, []runtime.Object{poweredDBCluster("my-db", clusterReadyPhase, false)})
+		_, err := runCRUDCmd(t, newClusterRestartCommand(o), args...)
+		if err == nil {
+			t.Fatalf("%v should be refused", args)
+		}
+		if !strings.Contains(err.Error(), "adbo cluster stop") {
+			t.Fatalf("the refusal should point at the verb that can return early: %v", err)
+		}
+		if len(patchBodies(d)) != 0 {
+			t.Fatalf("%v must not touch the cluster", args)
+		}
+	}
+}
+
+func TestClusterRestartHAWaitFailsFastOnAStuckStandby(t *testing.T) {
+	// HA that never comes back is usually a standby that cannot start. Without
+	// this the command sat here until --timeout with nothing to show.
+	shortHAPolling(t)
+	stuck := haDBCluster("my-db", 1, false, "StandbyUnhealthy")
+	if err := unstructured.SetNestedSlice(stuck.Object, []any{
+		map[string]any{"code": "DBSE0013", "message": "Database instance is unhealthy"},
+	}, "status", "criticalIncidents"); err != nil {
+		t.Fatal(err)
+	}
+	opts, _, _ := crudFakes(t, []runtime.Object{stuck})
+	c, err := opts.Clients()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	start := time.Now()
+	err = waitForHAReady(ctx, waitTestCmd(&buf), opts, c, "my-db")
+	if err == nil {
+		t.Fatal("a fatal incident should end the HA wait")
+	}
+	if !strings.Contains(err.Error(), "DBSE0013") {
+		t.Fatalf("error should carry the incident: %v", err)
+	}
+	// The database is up, so the message must not read as a failed restart.
+	if !strings.Contains(err.Error(), "is serving") {
+		t.Fatalf("error should say the cluster is serving: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("expected to fail fast, took %s", elapsed)
+	}
+}
+
+func TestClusterRestartHAWaitRidesOutATransientReadFailure(t *testing.T) {
+	// The cluster is already serving by now: one failed read should not turn a
+	// finished restart into a failed command.
+	shortHAPolling(t)
+	opts, dyn, _ := crudFakes(t, []runtime.Object{haDBCluster("my-db", 1, true, "Ready")})
+	gets := 0
+	dyn.PrependReactor("get", "dbclusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+		gets++
+		if gets == 1 {
+			return true, nil, errBoom
+		}
+		return false, nil, nil
+	})
+
+	c, err := opts.Clients()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := waitForHAReady(context.Background(), waitTestCmd(&buf), opts, c, "my-db"); err != nil {
+		t.Fatalf("a transient read failure should be retried, got %v", err)
+	}
+	if !strings.Contains(buf.String(), "retrying") {
+		t.Fatalf("the retry should be visible to the user:\n%s", buf.String())
+	}
+}
+
+func TestClusterRestartHAWaitStopsIfTheClusterIsDeleted(t *testing.T) {
+	// Retrying is right for a blip, but not for a cluster that is gone.
+	shortHAPolling(t)
+	opts, dyn, _ := crudFakes(t, []runtime.Object{haDBCluster("my-db", 1, false, "SetupInProgress")})
+	dyn.PrependReactor("get", "dbclusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewNotFound(k8s.DBClusterGVR.GroupResource(), "my-db")
+	})
+
+	c, err := opts.Clients()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	err = waitForHAReady(context.Background(), waitTestCmd(&buf), opts, c, "my-db")
+	if err == nil {
+		t.Fatal("a deleted cluster should end the wait")
+	}
+	if strings.Contains(buf.String(), "retrying") {
+		t.Fatalf("a deleted cluster is not a blip to retry:\n%s", buf.String())
+	}
+}
+
+func TestClusterRestartJSONSummary(t *testing.T) {
+	opts, dyn, _ := crudFakes(t, []runtime.Object{poweredDBCluster("my-db", clusterReadyPhase, false)})
+	phaseFollowsIsStopped(dyn, "my-db")
+	opts.Output = output.OutputJSON
+
+	stdout, stderr, err := runCRUDCmdSplit(t, newClusterRestartCommand(opts), "my-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("-o json should leave stdout parseable: %v\nstdout: %s", err, stdout)
+	}
+	if got["name"] != "my-db" || got["phase"] != clusterReadyPhase || got["haReady"] != false {
+		t.Fatalf("summary = %v", got)
+	}
+	if !strings.Contains(stderr, "Restarted cluster") {
+		t.Fatalf("commentary should go to stderr:\n%s", stderr)
 	}
 }
 
