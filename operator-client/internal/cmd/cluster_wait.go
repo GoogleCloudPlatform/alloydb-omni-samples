@@ -30,11 +30,20 @@ const (
 	// unschedulable pod is treated as fatal. One sighting is normal.
 	unschedulableStrikes = 3
 
-	// incidentStrikes is the same idea for criticalIncidents. Omni posts
-	// transient ones -- a stop/start cycle can briefly show
-	// "[DBSE0001] Internal. General Controller Error." and then recover -- so
-	// a single sighting must not end the wait.
-	incidentStrikes = 2
+	// incidentStrikes is the same idea for criticalIncidents, and it has to be
+	// this patient because Omni posts transient ones freely. Sampled every
+	// four seconds through one live stop/start cycle: [DBSE0001] "Internal.
+	// General Controller Error." was up for around ten seconds while the
+	// cluster was reconciling, and [DBSE0304] for twenty-five more once it was
+	// already DBClusterReady. The operator withdrew both and the cluster
+	// stayed healthy.
+	//
+	// At two strikes -- twenty seconds of persistence -- that noise was inside
+	// the threshold, and a restart duly failed on an incident the operator
+	// dropped moments later. Six puts the bar at fifty seconds, roughly twice
+	// the longest transient seen. A genuinely stuck cluster still reports,
+	// just a little later; the opposite mistake abandons a healthy one.
+	incidentStrikes = 6
 )
 
 // schedulingIncidentCodes are the incidents the operator posts about placing
@@ -113,6 +122,14 @@ func waitForClusterPhase(ctx context.Context, cmd *cobra.Command, opts *GlobalOp
 		switch {
 		case errors.As(err, &failed):
 			return fmt.Errorf("cluster %s failed: %s", failed.Name, failed.Reason)
+		case errors.Is(ctx.Err(), context.Canceled):
+			// A Ctrl+C. client-go reports that as "timed out waiting for the
+			// condition", which is the wrong story twice over: nothing timed
+			// out, and the change has already been accepted, so the operator
+			// carries on whether adbo is watching or not. Wrapping
+			// context.Canceled keeps that legible to callers.
+			return fmt.Errorf("stopped waiting for cluster %q to reach %s; the operator carries on without adbo, so check `adbo status %s`: %w",
+				name, wantPhase, name, context.Canceled)
 		case errors.Is(err, context.DeadlineExceeded):
 			// Fallback: the watcher above normally catches these first, but its
 			// reads can fail, so check the object the phase watch last saw.
