@@ -84,6 +84,96 @@ func TestRootRegistersStatus(t *testing.T) {
 
 // A sparse spec must still read cleanly: unset numbers show as "?", never as
 // Go's "<nil>".
+func TestStatusReadsTheDataDiskByName(t *testing.T) {
+	// The disks are a list and DataDisk is not promised to be first; reading
+	// disks[0] reported LogDisk's size as the database's.
+	db := testDBCluster("my-db", clusterReadyPhase)
+	if err := unstructured.SetNestedSlice(db.Object, []any{
+		map[string]any{"name": "LogDisk", "size": "2Gi"},
+		map[string]any{"name": defaultDataDiskName, "size": "100Gi"},
+	}, "spec", "primarySpec", "resources", "disks"); err != nil {
+		t.Fatal(err)
+	}
+	opts, _, _ := crudFakes(t, []runtime.Object{db})
+	out, err := runCRUDCmd(t, newStatusCommand(opts), "my-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "100Gi disk") {
+		t.Fatalf("status should report the DataDisk, not whichever came first:\n%s", out)
+	}
+	if strings.Contains(out, "2Gi disk") {
+		t.Fatalf("status reported the log disk as the database disk:\n%s", out)
+	}
+}
+
+func TestStatusPrefersTheCurrentEndpointField(t *testing.T) {
+	// status.primary.endpoint is deprecated in the CRD in favour of the
+	// endpoints list, so a cluster that only fills the list must not show "-".
+	db := testDBCluster("my-db", clusterReadyPhase)
+	if err := unstructured.SetNestedSlice(db.Object, []any{
+		map[string]any{"name": "primary", "value": "10.0.0.9"},
+	}, "status", "primary", "endpoints"); err != nil {
+		t.Fatal(err)
+	}
+	opts, _, _ := crudFakes(t, []runtime.Object{db})
+	out, err := runCRUDCmd(t, newStatusCommand(opts), "my-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "10.0.0.9") {
+		t.Fatalf("status should read status.primary.endpoints:\n%s", out)
+	}
+}
+
+func TestStatusShowsHAThatIsConfiguredButNotWorking(t *testing.T) {
+	// Two standbys configured is not two standbys caught up: until HAReady
+	// goes True a failover could lose data, and "2 standbys" alone reads as
+	// healthy. Live reasons here are SetupInProgress and StandbyUnhealthy.
+	db := testDBCluster("my-db", clusterReadyPhase)
+	if err := unstructured.SetNestedField(db.Object, int64(2), "spec", "availability", "numberOfStandbys"); err != nil {
+		t.Fatal(err)
+	}
+	if err := unstructured.SetNestedSlice(db.Object, []any{
+		map[string]any{"type": haReadyConditionType, "status": "False", "reason": "StandbyUnhealthy"},
+	}, "status", "conditions"); err != nil {
+		t.Fatal(err)
+	}
+	opts, _, _ := crudFakes(t, []runtime.Object{db})
+	out, err := runCRUDCmd(t, newStatusCommand(opts), "my-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"2 standbys", "HA not ready", "StandbyUnhealthy"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("HA line missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestStatusSingleStandbyIsNotPluralised(t *testing.T) {
+	db := testDBCluster("my-db", clusterReadyPhase)
+	if err := unstructured.SetNestedField(db.Object, int64(1), "spec", "availability", "numberOfStandbys"); err != nil {
+		t.Fatal(err)
+	}
+	if err := unstructured.SetNestedSlice(db.Object, []any{
+		map[string]any{"type": haReadyConditionType, "status": "True", "reason": "Ready"},
+	}, "status", "conditions"); err != nil {
+		t.Fatal(err)
+	}
+	opts, _, _ := crudFakes(t, []runtime.Object{db})
+	out, err := runCRUDCmd(t, newStatusCommand(opts), "my-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "1 standby,") && !strings.Contains(out, "1 standby\n") {
+		t.Fatalf("one standby should not be plural:\n%s", out)
+	}
+	if strings.Contains(out, "HA not ready") {
+		t.Fatalf("a caught-up standby should not be flagged:\n%s", out)
+	}
+}
+
 func TestStatusUnknownResourcesReadAsQuestionMarks(t *testing.T) {
 	db := statusFixture()
 	if err := unstructured.SetNestedMap(db.Object, map[string]any{
