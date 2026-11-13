@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -71,11 +74,13 @@ func TestClusterStopAsksForConfirmation(t *testing.T) {
 	cmd := newClusterStopCommand(opts)
 	cmd.SetIn(strings.NewReader("n\n"))
 	out, err := runCRUDCmd(t, cmd, "my-db", "--no-wait")
-	if err != nil {
-		t.Fatal(err)
+	// EOF on a script's stdin answers no, so this has to be a non-zero exit
+	// or the script reads an aborted shutdown as a completed one.
+	if !errors.Is(err, errDeclined) {
+		t.Fatalf("answering no should fail the command, got %v", err)
 	}
-	if !strings.Contains(out, "Cancelled; the cluster is still running.") {
-		t.Fatalf("answering no should cancel:\n%s", out)
+	if !strings.Contains(err.Error(), "still running") {
+		t.Fatalf("the error should say the cluster is untouched: %v", err)
 	}
 	if storedIsStopped(t, opts, "my-db") {
 		t.Fatal("a cancelled stop must not touch the cluster")
@@ -85,6 +90,68 @@ func TestClusterStopAsksForConfirmation(t *testing.T) {
 		if !strings.Contains(strings.ToLower(out), strings.ToLower(want)) {
 			t.Fatalf("prompt missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestClusterStopWaitsOutAnInFlightTransition(t *testing.T) {
+	// `stop` straight after `stop --no-wait`: the flag is already set, but the
+	// operator has not finished. Reporting "nothing to do" and exiting 0 there
+	// claims a shutdown that has not happened yet.
+	opts, dyn, _ := crudFakes(t, []runtime.Object{poweredDBCluster("my-db", "DBClusterReconciling", true)})
+
+	// The stored object stays mid-transition, which is what the command Gets
+	// before deciding. The waiter Lists, and by then the operator has
+	// finished -- so a command that waits completes, and one that returns
+	// early never prints the lines below.
+	dyn.PrependReactor("list", "dbclusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+		db := poweredDBCluster("my-db", clusterStoppedPhase, true)
+		list := &unstructured.UnstructuredList{Items: []unstructured.Unstructured{*db}}
+		list.SetAPIVersion(k8s.APIVersion)
+		list.SetKind("DBClusterList")
+		return true, list, nil
+	})
+
+	out, err := runCRUDCmd(t, newClusterStopCommand(opts), "my-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "has not finished yet") {
+		t.Fatalf("a mid-transition stop should keep waiting:\n%s", out)
+	}
+	if !strings.Contains(out, "is "+clusterStoppedPhase) {
+		t.Fatalf("it should report the phase it waited for:\n%s", out)
+	}
+}
+
+func TestClusterStopNoOpDoesNotWaitWithNoWait(t *testing.T) {
+	// --no-wait means do not block, even to confirm a transition in flight.
+	opts, _, _ := crudFakes(t, []runtime.Object{poweredDBCluster("my-db", "DBClusterReconciling", true)})
+	out, err := runCRUDCmd(t, newClusterStopCommand(opts), "my-db", "--no-wait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "has not finished yet") {
+		t.Fatalf("--no-wait should return immediately:\n%s", out)
+	}
+}
+
+func TestClusterPowerJSONSummary(t *testing.T) {
+	opts, _, _ := crudFakes(t, []runtime.Object{poweredDBCluster("my-db", clusterReadyPhase, false)})
+	opts.Output = output.OutputJSON
+
+	stdout, stderr, err := runCRUDCmdSplit(t, newClusterStopCommand(opts), "my-db", "--no-wait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("-o json should leave stdout parseable: %v\nstdout: %s", err, stdout)
+	}
+	if got["action"] != "stop" || got["applied"] != true || got["name"] != "my-db" {
+		t.Fatalf("summary = %v", got)
+	}
+	if !strings.Contains(stderr, "Requested stop") {
+		t.Fatalf("commentary should go to stderr:\n%s", stderr)
 	}
 }
 
