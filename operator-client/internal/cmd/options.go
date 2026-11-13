@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 )
 
 // GlobalOptions holds flags shared by every command. Pass the same pointer
@@ -68,6 +70,26 @@ func (o *GlobalOptions) AddWaitFlags(cmd *cobra.Command) *WaitFlags {
 	cmd.Flags().BoolVar(&w.NoWait, "no-wait", false, "return as soon as the object is created")
 	cmd.MarkFlagsMutuallyExclusive("wait", "no-wait")
 	return w
+}
+
+// errDeclined ends a command the user did not confirm. It is an error, not a
+// quiet return, so a script that forgot -y gets a non-zero exit instead of
+// reading an aborted change as success.
+var errDeclined = errors.New("cancelled")
+
+// Prose returns where a command's running commentary belongs: stdout for a
+// person, stderr when -o json or -o yaml has promised stdout to a parser.
+// The machine-readable document itself always goes to stdout.
+func (o *GlobalOptions) Prose(cmd *cobra.Command) io.Writer {
+	if o.Structured() {
+		return cmd.ErrOrStderr()
+	}
+	return cmd.OutOrStdout()
+}
+
+// Structured reports whether -o asked for a document rather than for prose.
+func (o *GlobalOptions) Structured() bool {
+	return o.Output == output.OutputJSON || o.Output == output.OutputYAML
 }
 
 // Confirm asks "prompt [y/N] " unless -y was set.
