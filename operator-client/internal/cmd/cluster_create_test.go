@@ -424,6 +424,40 @@ func TestClusterCreateWaitFailsFastOnCriticalIncident(t *testing.T) {
 	}
 }
 
+func TestClusterWaitDoesNotFailOnTheOperatorsSchedulingIncident(t *testing.T) {
+	// A live operator posts DBSE0085 for a pod the scheduler has already
+	// placed and withdraws it about forty seconds later, which was long
+	// enough to abort creates that then came up fine. Only the scheduler's
+	// own verdict ends the wait now.
+	shortIncidentPolling(t)
+	noisy := testDBCluster("my-db", "DBClusterReconciling")
+	if err := unstructured.SetNestedSlice(noisy.Object, []any{
+		map[string]any{"code": "DBSE0085", "message": "Platform: Pod is unschedulable."},
+	}, "status", "criticalIncidents"); err != nil {
+		t.Fatal(err)
+	}
+	opts, _, _ := crudFakes(t, []runtime.Object{noisy})
+	// Long enough for the informer to sync, so the deadline is what ends it.
+	opts.Timeout = 2 * time.Second
+	c, err := opts.Clients()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	err = waitForClusterPhase(context.Background(), waitTestCmd(&buf), opts, c, "my-db", clusterReadyPhase)
+	if err == nil {
+		t.Fatal("this cluster never becomes ready, so the wait should end on its deadline")
+	}
+	if strings.Contains(err.Error(), "reported critical incidents while waiting") {
+		t.Fatalf("a scheduling incident must not end the wait on its own: %v", err)
+	}
+	// It still has to reach the user once the wait really does run out.
+	if !strings.Contains(err.Error(), "DBSE0085") {
+		t.Fatalf("the timeout should still report what the operator said: %v", err)
+	}
+}
+
 func TestClusterCreateWaitReportsCriticalIncidents(t *testing.T) {
 	failing := testDBCluster("my-db", "DBClusterUnknown")
 	if err := unstructured.SetNestedSlice(failing.Object, []any{
