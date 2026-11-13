@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 )
 
 // deleteGonePollInterval is how often `cluster delete --wait` re-reads the
@@ -61,15 +62,19 @@ func runClusterDelete(cmd *cobra.Command, opts *GlobalOptions, name string, keep
 		return err
 	}
 	ctx := cmd.Context()
-	out := cmd.OutOrStdout()
+	// -o json/yaml promises stdout to a parser, so the commentary goes to
+	// stderr and the document is the only thing on stdout.
+	out := opts.Prose(cmd)
 
 	// Read first so a typo is a clear error instead of a confirmation prompt
 	// for something that does not exist.
 	db, err := c.In(k8s.DBClusterGVR).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return fmt.Errorf("cluster %q not found in namespace %q (context %q); use -n to look in another namespace",
-				name, c.Namespace, c.Context)
+		// Only claim the cluster is missing when the 404 was about the object.
+		// A cluster with no Omni CRDs answers the same way, and FormatErr says
+		// so; intercepting that here would send the user hunting for a typo.
+		if k8s.IsObjectNotFound(err) {
+			return fmt.Errorf("cluster %q not found%s; use -n to look in another namespace", name, c.Where())
 		}
 		return c.FormatErr(err)
 	}
@@ -89,8 +94,7 @@ func runClusterDelete(cmd *cobra.Command, opts *GlobalOptions, name string, keep
 		return err
 	}
 	if !ok {
-		fmt.Fprintln(out, "Cancelled; nothing deleted.")
-		return nil
+		return fmt.Errorf("%w; nothing was deleted", errDeclined)
 	}
 
 	// Omni's validating webhook rejects a DELETE while spec.isDeleted is
@@ -109,22 +113,45 @@ func runClusterDelete(cmd *cobra.Command, opts *GlobalOptions, name string, keep
 	}
 	fmt.Fprintf(out, "Deleting cluster %q in namespace %q.\n", name, c.Namespace)
 
+	summary := deletedCluster{Name: name, Namespace: c.Namespace, Secret: secretName, Waited: wait}
 	if keepSecret {
+		summary.SecretAction = "kept"
 		fmt.Fprintf(out, "Kept the admin secret %q.\n", secretName)
-		return waitForClusterGoneIf(cmd, opts, c, name, wait)
+	} else {
+		// A missing secret is not a failure: the cluster may have been created
+		// by hand, or a previous delete may have removed it already.
+		switch err := c.Typed.CoreV1().Secrets(c.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{}); {
+		case err == nil:
+			summary.SecretAction = "deleted"
+			fmt.Fprintf(out, "Deleted the admin secret %q.\n", secretName)
+		case apierrors.IsNotFound(err):
+			summary.SecretAction = "absent"
+			fmt.Fprintf(out, "No admin secret %q to delete.\n", secretName)
+		default:
+			return c.FormatErr(err)
+		}
 	}
 
-	// A missing secret is not a failure: the cluster may have been created
-	// by hand, or a previous delete may have removed it already.
-	switch err := c.Typed.CoreV1().Secrets(c.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{}); {
-	case err == nil:
-		fmt.Fprintf(out, "Deleted the admin secret %q.\n", secretName)
-	case apierrors.IsNotFound(err):
-		fmt.Fprintf(out, "No admin secret %q to delete.\n", secretName)
-	default:
-		return c.FormatErr(err)
+	gone, err := waitForClusterGoneIf(cmd, opts, c, name, wait)
+	if err != nil {
+		return err
 	}
-	return waitForClusterGoneIf(cmd, opts, c, name, wait)
+	summary.Gone = gone
+	if !opts.Structured() {
+		return nil
+	}
+	return output.Print(cmd.OutOrStdout(), opts.Output, output.Table{}, summary)
+}
+
+// deletedCluster is what delete did, for -o json/yaml. Gone is true only when
+// --wait actually saw the object disappear.
+type deletedCluster struct {
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+	Secret       string `json:"secret"`
+	SecretAction string `json:"secretAction"` // deleted, kept or absent
+	Waited       bool   `json:"waited"`
+	Gone         bool   `json:"gone"`
 }
 
 // waitForClusterGoneIf blocks until the DBCluster is really gone, when --wait
@@ -135,11 +162,11 @@ func runClusterDelete(cmd *cobra.Command, opts *GlobalOptions, name string, keep
 // internal/wait is deliberately not used here: its package doc says a Deleted
 // event is treated as an error and that waiting for an object to disappear
 // needs a different helper.
-func waitForClusterGoneIf(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, name string, wait bool) error {
-	out := cmd.OutOrStdout()
+func waitForClusterGoneIf(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, name string, wait bool) (bool, error) {
+	out := opts.Prose(cmd)
 	if !wait {
 		fmt.Fprintf(out, "Not waiting for the operator to finish; check with: adbo status %s\n", name)
-		return nil
+		return false, nil
 	}
 
 	ctx, cancel := opts.WithTimeout(cmd.Context())
@@ -149,17 +176,17 @@ func waitForClusterGoneIf(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Client
 		switch {
 		case apierrors.IsNotFound(err):
 			fmt.Fprintf(out, "Cluster %q is gone.\n", name)
-			return nil
+			return true, nil
 		case ctx.Err() != nil:
 			// --timeout is the only deadline in play, so anything else is a
 			// Ctrl+C: reporting a timeout there would be the wrong story.
 			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return ctx.Err()
+				return false, ctx.Err()
 			}
-			return fmt.Errorf("timed out after %s waiting for cluster %q to finish deleting; the operator may still be running finalizers (kubectl get dbcluster %s -n %s)",
+			return false, fmt.Errorf("timed out after %s waiting for cluster %q to finish deleting; the operator may still be running finalizers (kubectl get dbcluster %s -n %s)",
 				opts.Timeout, name, name, c.Namespace)
 		case err != nil:
-			return c.FormatErr(err)
+			return false, c.FormatErr(err)
 		}
 
 		select {
