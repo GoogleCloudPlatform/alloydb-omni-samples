@@ -424,6 +424,84 @@ func TestClusterCreateWaitFailsFastOnCriticalIncident(t *testing.T) {
 	}
 }
 
+func TestClusterWaitToleratesATransientCriticalIncident(t *testing.T) {
+	// An incident one sighting short of the strike count must not end the
+	// wait: live operators post them for tens of seconds and then withdraw
+	// them, and failing there abandons a cluster that is coming up fine.
+	shortIncidentPolling(t)
+	opts, dyn, _ := crudFakes(t, []runtime.Object{testDBCluster("my-db", "DBClusterReconciling")})
+	opts.Timeout = 2 * time.Second
+
+	flaky := testDBCluster("my-db", "DBClusterReconciling")
+	if err := unstructured.SetNestedSlice(flaky.Object, []any{
+		map[string]any{"code": "DBSE0001", "message": "Internal. General Controller Error."},
+	}, "status", "criticalIncidents"); err != nil {
+		t.Fatal(err)
+	}
+	// Only the watcher Gets the cluster; the phase waiter Lists and Watches.
+	gets := 0
+	dyn.PrependReactor("get", "dbclusters", func(k8stesting.Action) (bool, runtime.Object, error) {
+		gets++
+		if gets < incidentStrikes {
+			return true, flaky, nil
+		}
+		return true, testDBCluster("my-db", "DBClusterReconciling"), nil
+	})
+
+	c, err := opts.Clients()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	err = waitForClusterPhase(context.Background(), waitTestCmd(&buf), opts, c, "my-db", clusterReadyPhase)
+	if err == nil {
+		t.Fatal("this cluster never becomes ready, so the wait should end on its deadline")
+	}
+	if strings.Contains(err.Error(), "reported critical incidents while waiting") {
+		t.Fatalf("an incident that clears before the strike count must not end the wait: %v", err)
+	}
+}
+
+func TestIncidentStrikesOutlastTheOperatorsTransients(t *testing.T) {
+	// Pins the budget rather than the constant: a live stop/start posted
+	// [DBSE0304] for about twenty-five seconds on a cluster that was already
+	// DBClusterReady, so anything under that abandons healthy clusters.
+	const longestTransientSeen = 30 * time.Second
+	if budget := time.Duration(incidentStrikes-1) * incidentPollInterval; budget < longestTransientSeen {
+		t.Fatalf("a critical incident ends a wait after %s, inside the %s of transients a live operator posts",
+			budget, longestTransientSeen)
+	}
+}
+
+func TestClusterWaitInterruptIsNotReportedAsATimeout(t *testing.T) {
+	// client-go reports a cancelled watch as "timed out waiting for the
+	// condition", so a Ctrl+C used to read as a timeout -- and told the user
+	// nothing about the operation that is still running without them.
+	opts, _, _ := crudFakes(t, []runtime.Object{testDBCluster("my-db", "DBClusterReconciling")})
+	opts.Timeout = 0 // no deadline, so only the cancellation can end this
+	c, err := opts.Clients()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	var buf bytes.Buffer
+	err = waitForClusterPhase(ctx, waitTestCmd(&buf), opts, c, "my-db", clusterReadyPhase)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("an interrupted wait should surface as a cancellation, got %v", err)
+	}
+	if strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("a cancelled wait must not be reported as a timeout: %v", err)
+	}
+	if !strings.Contains(err.Error(), "adbo status my-db") {
+		t.Fatalf("it should say how to follow the operation that is still running: %v", err)
+	}
+}
+
 func TestClusterWaitDoesNotFailOnTheOperatorsSchedulingIncident(t *testing.T) {
 	// A live operator posts DBSE0085 for a pod the scheduler has already
 	// placed and withdraws it about forty seconds later, which was long
