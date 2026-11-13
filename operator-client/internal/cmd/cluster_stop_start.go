@@ -10,6 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/wait"
 )
 
 // clusterStoppedPhase is status.phase once the operator has shut the database
@@ -87,7 +89,7 @@ func runClusterPower(cmd *cobra.Command, opts *GlobalOptions, name string, op po
 		return err
 	}
 	ctx := cmd.Context()
-	out := cmd.OutOrStdout()
+	out := opts.Prose(cmd)
 	verb, wantPhase := "start", clusterReadyPhase
 	if op.stop {
 		verb, wantPhase = "stop", clusterStoppedPhase
@@ -106,6 +108,16 @@ func runClusterPower(cmd *cobra.Command, opts *GlobalOptions, name string, op po
 			state = "stopped"
 		}
 		fmt.Fprintf(out, "Cluster %q is already %s; nothing to do.\n", name, state)
+
+		// The flag is set, but the operator may still be acting on it: this is
+		// what `stop` right after `stop --no-wait` sees. Saying "nothing to
+		// do" and exiting 0 while the cluster is mid-transition would report a
+		// shutdown that has not happened, so finish the wait the user asked
+		// for instead.
+		if op.wait && !op.dryRun && wait.Phase(db) != wantPhase {
+			fmt.Fprintf(out, "The operator has not finished yet; waiting for %s.\n", wantPhase)
+			return waitForClusterPhase(ctx, cmd, opts, c, name, wantPhase)
+		}
 		return nil
 	}
 
@@ -118,8 +130,7 @@ func runClusterPower(cmd *cobra.Command, opts *GlobalOptions, name string, op po
 			return err
 		}
 		if !ok {
-			fmt.Fprintln(out, "Cancelled; the cluster is still running.")
-			return nil
+			return fmt.Errorf("%w; the cluster is still running", errDeclined)
 		}
 	}
 
@@ -137,14 +148,41 @@ func runClusterPower(cmd *cobra.Command, opts *GlobalOptions, name string, op po
 
 	if op.dryRun {
 		fmt.Fprintf(out, "Dry run: %s of cluster %q was validated and not applied.\n", verb, name)
-		return nil
+		return reportPower(cmd, opts, poweredCluster{
+			Name: name, Namespace: c.Namespace, Action: verb, DryRun: true,
+		})
 	}
 	fmt.Fprintf(out, "Requested %s of cluster %q in namespace %q.\n", verb, name, c.Namespace)
+	summary := poweredCluster{Name: name, Namespace: c.Namespace, Action: verb, Applied: true, Waited: op.wait}
 	if !op.wait {
 		fmt.Fprintf(out, "Not waiting. Check progress with: adbo status %s\n", name)
+		return reportPower(cmd, opts, summary)
+	}
+	if err := waitForClusterPhase(ctx, cmd, opts, c, name, wantPhase); err != nil {
+		return err
+	}
+	summary.Phase = wantPhase
+	return reportPower(cmd, opts, summary)
+}
+
+// poweredCluster is what stop or start did, for -o json/yaml.
+type poweredCluster struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Action    string `json:"action"` // stop or start
+	Applied   bool   `json:"applied"`
+	DryRun    bool   `json:"dryRun,omitempty"`
+	Waited    bool   `json:"waited"`
+	Phase     string `json:"phase,omitempty"` // only when the wait saw it
+}
+
+// reportPower prints the summary, and nothing at all when the user asked for
+// prose: they have been reading it as the command went.
+func reportPower(cmd *cobra.Command, opts *GlobalOptions, summary poweredCluster) error {
+	if !opts.Structured() {
 		return nil
 	}
-	return waitForClusterPhase(ctx, cmd, opts, c, name, wantPhase)
+	return output.Print(cmd.OutOrStdout(), opts.Output, output.Table{}, summary)
 }
 
 // isStoppedPatch sets spec.primarySpec.isStopped and carries the object's
