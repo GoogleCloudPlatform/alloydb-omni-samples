@@ -5,7 +5,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -45,11 +44,14 @@ func runStatus(cmd *cobra.Command, opts *GlobalOptions, name string) error {
 	}
 	db, err := c.In(k8s.DBClusterGVR).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// Deliberately not wrapping err: k8s.Format in main would otherwise
-			// prepend its own generic "not found" to this message.
-			return fmt.Errorf("cluster %q not found in namespace %q (context %q); use -n to look in another namespace",
-				name, c.Namespace, c.Context)
+		// Only a 404 for the object itself means a missing cluster. On a
+		// cluster with no Omni CRDs every Get answers 404, and FormatErr says
+		// that; claiming a bad name here would hide it.
+		//
+		// Deliberately not wrapping err: k8s.Format in main would otherwise
+		// prepend its own generic "not found" to this message.
+		if k8s.IsObjectNotFound(err) {
+			return fmt.Errorf("cluster %q not found%s; use -n to look in another namespace", name, c.Where())
 		}
 		return c.FormatErr(err)
 	}
@@ -136,7 +138,7 @@ func readStatusView(db *unstructured.Unstructured) statusView {
 
 	st := statusView{
 		phase:    orDash(str("status", "phase")),
-		endpoint: orDash(str("status", "primary", "endpoint")),
+		endpoint: orDash(primaryEndpoint(db)),
 		state:    "running",
 		ha:       "off (no standbys)",
 	}
@@ -152,22 +154,106 @@ func readStatusView(db *unstructured.Unstructured) statusView {
 		st.stopped, st.state = true, "stopped"
 	}
 
-	disk := "?"
-	if disks, _, _ := unstructured.NestedSlice(db.Object, "spec", "primarySpec", "resources", "disks"); len(disks) > 0 {
-		// Same guard as quantity: an absent size must not print as "<nil>".
-		if d, ok := disks[0].(map[string]any); ok && d["size"] != nil {
-			disk = fmt.Sprint(d["size"])
-		}
-	}
+	disk := dataDiskSize(db)
 	st.resources = fmt.Sprintf("%s CPU, %s memory, %s disk",
 		quantity("spec", "primarySpec", "resources", "cpu"),
 		quantity("spec", "primarySpec", "resources", "memory"), disk)
 
 	if n, found, _ := unstructured.NestedInt64(db.Object, "spec", "availability", "numberOfStandbys"); found && n > 0 {
-		st.ha = fmt.Sprintf("%d standby", n)
+		noun := "standbys"
+		if n == 1 {
+			noun = "standby"
+		}
+		st.ha = fmt.Sprintf("%d %s", n, noun)
 		if af, found, _ := unstructured.NestedBool(db.Object, "spec", "availability", "enableAutoFailover"); found && !af {
 			st.ha += ", auto-failover off"
 		}
+		// Configured is not the same as working: a restarted cluster is
+		// DBClusterReady while its standbys are still catching up, and until
+		// HAReady goes True a failover could lose data. Say so where the user
+		// is already looking for it.
+		if status, reason := haReadyCondition(db); status != "True" {
+			st.ha += ", " + haNotReady(status, reason)
+		}
 	}
 	return st
+}
+
+// haReadyConditionType is the condition the operator sets once the standbys
+// have caught up and a failover would not lose data. It is reported there
+// rather than in status.phase, which stays DBClusterReady throughout.
+const haReadyConditionType = "HAReady"
+
+// haReadyCondition reads the HAReady condition's status and reason, both empty
+// when the operator has not posted the condition at all -- which is the normal
+// state of a cluster with no standbys.
+func haReadyCondition(db *unstructured.Unstructured) (status, reason string) {
+	conds, _, _ := unstructured.NestedSlice(db.Object, "status", "conditions")
+	for _, it := range conds {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := m["type"].(string); t != haReadyConditionType {
+			continue
+		}
+		status, _ = m["status"].(string)
+		reason, _ = m["reason"].(string)
+		return status, reason
+	}
+	return "", ""
+}
+
+// haNotReady describes an HAReady condition that is not True.
+func haNotReady(status, reason string) string {
+	switch {
+	case reason != "":
+		return fmt.Sprintf("HA not ready (%s)", reason)
+	case status == "":
+		return "HA readiness not reported yet"
+	default:
+		return "HA not ready"
+	}
+}
+
+// primaryEndpoint prefers status.primary.endpoints, the list that replaced the
+// single status.primary.endpoint the CRD now marks deprecated. The old field
+// is still read, for operators that have not caught up.
+func primaryEndpoint(db *unstructured.Unstructured) string {
+	endpoints, _, _ := unstructured.NestedSlice(db.Object, "status", "primary", "endpoints")
+	for _, e := range endpoints {
+		m, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, _ := m["value"].(string); v != "" {
+			return v
+		}
+	}
+	if url, _, _ := unstructured.NestedString(db.Object, "status", "primary", "url"); url != "" {
+		return url
+	}
+	v, _, _ := unstructured.NestedString(db.Object, "status", "primary", "endpoint")
+	return v
+}
+
+// dataDiskSize is the size of the disk holding the database files. The disks
+// are a list and DataDisk is not promised to be first, so match it by name
+// rather than reporting whichever disk the operator happened to write first.
+func dataDiskSize(db *unstructured.Unstructured) string {
+	disks, _, _ := unstructured.NestedSlice(db.Object, "spec", "primarySpec", "resources", "disks")
+	for _, d := range disks {
+		m, ok := d.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := m["name"].(string); name != defaultDataDiskName {
+			continue
+		}
+		// Same guard as quantity: an absent size must not print as "<nil>".
+		if m["size"] != nil {
+			return fmt.Sprint(m["size"])
+		}
+	}
+	return "?"
 }
