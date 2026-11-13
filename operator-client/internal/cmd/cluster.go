@@ -18,6 +18,7 @@ func newClusterCommand(opts *GlobalOptions) *cobra.Command {
 	c.AddCommand(
 		newClusterCreateCommand(opts),
 		newClusterDeleteCommand(opts),
+		newClusterRestartCommand(opts),
 		newClusterStartCommand(opts),
 		newClusterStopCommand(opts),
 	)

@@ -134,7 +134,7 @@ func runClusterPower(cmd *cobra.Command, opts *GlobalOptions, name string, op po
 		}
 	}
 
-	body, err := isStoppedPatch(db, op.stop)
+	body, err := isStoppedPatch(db.GetResourceVersion(), op.stop)
 	if err != nil {
 		return err
 	}
@@ -185,12 +185,15 @@ func reportPower(cmd *cobra.Command, opts *GlobalOptions, summary poweredCluster
 	return output.Print(cmd.OutOrStdout(), opts.Output, output.Table{}, summary)
 }
 
-// isStoppedPatch sets spec.primarySpec.isStopped and carries the object's
-// resourceVersion, so a cluster edited while the user was at the prompt fails
-// with a Conflict rather than having that edit silently overwritten.
-func isStoppedPatch(db *unstructured.Unstructured, stop bool) ([]byte, error) {
-	patch := map[string]any{
-		"metadata": map[string]any{"resourceVersion": db.GetResourceVersion()},
+// isStoppedPatch sets spec.primarySpec.isStopped. resourceVersion is the one
+// the caller read, so a cluster edited while the user was at the prompt fails
+// with a Conflict rather than having that edit silently overwritten. Pass ""
+// to send no precondition, which is what `cluster restart --force-conflicts`
+// asks for.
+func isStoppedPatch(resourceVersion string, stop bool) ([]byte, error) {
+	patch := map[string]any{}
+	if resourceVersion != "" {
+		patch["metadata"] = map[string]any{"resourceVersion": resourceVersion}
 	}
 	if err := unstructured.SetNestedField(patch, stop, isStoppedPath...); err != nil {
 		return nil, err
