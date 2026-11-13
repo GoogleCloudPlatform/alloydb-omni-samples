@@ -22,6 +22,11 @@ CLUSTER="${CLUSTER:-adbo-e2e-$$}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
 SECRET="db-pw-${CLUSTER}"
 
+# adbo's own --timeout defaults to 30 minutes, so without this WAIT_TIMEOUT
+# would bound only await_phase below and a wedged cluster would hang a blocking
+# verb -- cleanup included -- for half an hour.
+ADBO_TIMEOUT=(--timeout "${WAIT_TIMEOUT}s")
+
 if [[ -z "$VERSION" ]]; then
   echo "VERSION is required; pick one the operator serves, e.g." >&2
   echo "  kubectl get dbclusters -A -o jsonpath='{.items[*].spec.databaseVersion}'" >&2
@@ -39,7 +44,7 @@ cleanup() {
   local rc=$?
   if kubectl get dbcluster "$CLUSTER" -n "$NAMESPACE" >/dev/null 2>&1; then
     printf '\n=== cleanup: removing %s\n' "$CLUSTER"
-    "$ADBO" cluster delete "$CLUSTER" -y -n "$NAMESPACE" >/dev/null 2>&1 || true
+    "$ADBO" cluster delete "$CLUSTER" -y -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}" >/dev/null 2>&1 || true
   fi
   kubectl delete secret "$SECRET" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
   # The operator's own per-cluster TLS secrets (dbs-al-ca-*, dbs-al-cert-*)
@@ -74,9 +79,14 @@ secret_password() {
   kubectl get secret "$SECRET" -n "$NAMESPACE" \
     -o go-template="{{index .data \"$CLUSTER\" | base64decode}}" 2>/dev/null || true
 }
+# Selected by the operator's own labels, the way debug-snapshot/snapshot.sh and
+# samples/MVU.sh do. Grepping "-${CLUSTER}-" also matched clusters whose names
+# share a prefix -- "my-db-2"'s pod contains "-my-db-" too -- and relied on
+# "-nm-" to exclude the node manager.
 db_pod() {
-  kubectl get pods -n "$NAMESPACE" -o name 2>/dev/null |
-    grep -- "-${CLUSTER}-" | grep -v -- '-nm-' | head -1 | sed 's|pod/||' || true
+  kubectl get pods -n "$NAMESPACE" -o name 2>/dev/null \
+    -l "alloydbomni.internal.dbadmin.goog/dbcluster=$CLUSTER,alloydbomni.internal.dbadmin.goog/task-type=database" |
+    head -1 | sed 's|pod/||' || true
 }
 # Proves the password in the secret actually authenticates, which is the one
 # thing the operator has to agree with us about.
@@ -105,7 +115,7 @@ grep -q 'Checked locally only' <<<"$out" || fail "expected a local-only check, g
 ok "nothing persisted, limitation reported"
 
 say "create (waits for ready)"
-time "$ADBO" cluster create "$CLUSTER" --version "$VERSION" -n "$NAMESPACE"
+time "$ADBO" cluster create "$CLUSTER" --version "$VERSION" -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}"
 await_phase DBClusterReady
 ok "phase is DBClusterReady"
 
@@ -131,7 +141,7 @@ say "dry-run stop (must change nothing)"
 ok "isStopped untouched"
 
 say "stop (waits for stopped)"
-time "$ADBO" cluster stop "$CLUSTER" -y -n "$NAMESPACE"
+time "$ADBO" cluster stop "$CLUSTER" -y -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}"
 [[ "$(is_stopped)" == "true" ]] || fail "spec.primarySpec.isStopped is '$(is_stopped)', want true"
 await_phase DBClusterStopped
 kubectl get secret "$SECRET" -n "$NAMESPACE" >/dev/null || fail "stop removed the admin secret"
@@ -143,7 +153,7 @@ grep -q 'already stopped' <<<"$out" || fail "expected a no-op, got: $out"
 ok "reports already stopped"
 
 say "start (waits for ready)"
-time "$ADBO" cluster start "$CLUSTER" -n "$NAMESPACE"
+time "$ADBO" cluster start "$CLUSTER" -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}"
 [[ "$(is_stopped)" == "false" ]] || fail "isStopped is '$(is_stopped)', want false"
 await_phase DBClusterReady
 ok "started, isStopped=false"
@@ -167,7 +177,7 @@ ok "cluster, secret and isDeleted all untouched"
 
 say "delete (waits until gone)"
 # Omni's webhook denies DELETE unless spec.isDeleted is true; adbo patches it.
-time "$ADBO" cluster delete "$CLUSTER" -y -n "$NAMESPACE"
+time "$ADBO" cluster delete "$CLUSTER" -y -n "$NAMESPACE" "${ADBO_TIMEOUT[@]}"
 ! kubectl get dbcluster "$CLUSTER" -n "$NAMESPACE" >/dev/null 2>&1 || fail "the DBCluster is still present"
 ! kubectl get secret "$SECRET" -n "$NAMESPACE" >/dev/null 2>&1 || fail "the admin secret is still present"
 ok "cluster and secret are gone"
