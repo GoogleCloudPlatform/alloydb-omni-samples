@@ -34,6 +34,9 @@ const (
 	// 32Gi without a second flag.
 	memoryBytesPerCPU = 8 * 1024 * 1024 * 1024
 
+	// maxStandbys is the CRD's own maximum for spec.availability.numberOfStandbys.
+	maxStandbys = 5
+
 	generatedPasswordLength = 24
 
 	// passwordAlphabet leaves out quotes, backslashes and shell metacharacters
@@ -107,7 +110,9 @@ func runClusterCreate(cmd *cobra.Command, opts *GlobalOptions, name string, f cr
 		return err
 	}
 	ctx := cmd.Context()
-	out := cmd.OutOrStdout()
+	// With -o json/yaml the summary document owns stdout, so the commentary
+	// around it goes to stderr instead of corrupting the document.
+	out := opts.Prose(cmd)
 	secretName := k8s.AdminSecretName(name)
 
 	if f.dryRun {
@@ -141,7 +146,7 @@ func runClusterCreate(cmd *cobra.Command, opts *GlobalOptions, name string, f cr
 		generated:  generated,
 		reused:     reusedSecret,
 	}
-	if err := reportCreated(out, opts.Output, c, result, f.showPassword); err != nil {
+	if err := reportCreated(cmd, opts, c, result, f.showPassword); err != nil {
 		return err
 	}
 
@@ -163,10 +168,12 @@ type created struct {
 	reused     bool // the admin secret already existed
 }
 
-// reportCreated describes what was just created, as a table or as a summary
-// object for scripts.
-func reportCreated(out io.Writer, format string, c *k8s.Clients, r created, showPassword bool) error {
-	if format == output.OutputJSON || format == output.OutputYAML {
+// reportCreated describes what was just created, as prose or as a summary
+// object for scripts. The summary is the one thing that belongs on stdout
+// under -o json/yaml, so it takes the command rather than a single writer.
+func reportCreated(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, r created, showPassword bool) error {
+	format := opts.Output
+	if opts.Structured() {
 		summary := map[string]any{
 			"name":              r.name,
 			"namespace":         c.Namespace,
@@ -183,9 +190,10 @@ func reportCreated(out io.Writer, format string, c *k8s.Clients, r created, show
 		if r.generated && showPassword {
 			summary["password"] = r.password
 		}
-		return output.Print(out, format, output.Table{}, summary)
+		return output.Print(cmd.OutOrStdout(), format, output.Table{}, summary)
 	}
 
+	out := opts.Prose(cmd)
 	fmt.Fprintf(out, "Created cluster %q in namespace %q (%s CPU, %s memory, %s disk, version %s).\n",
 		r.name, c.Namespace, r.spec.cpu, r.spec.memory, r.spec.disk, r.spec.version)
 
@@ -286,8 +294,11 @@ func planCreate(name string, f createFlags) (clusterSpec, error) {
 	}
 	s.disk = disk.String()
 
-	if f.standbys < 0 {
-		return s, fmt.Errorf("--standbys must be 0 or more")
+	// Checked here rather than left to the API server: create writes the admin
+	// secret first, so a rejected DBCluster means a create that half happened
+	// and then rolled back.
+	if f.standbys < 0 || f.standbys > maxStandbys {
+		return s, fmt.Errorf("--standbys must be between 0 and %d", maxStandbys)
 	}
 	s.standbys = f.standbys
 
@@ -320,9 +331,15 @@ func newDBClusterObject(name, namespace, secretName string, s clusterSpec) *unst
 	// deliberate configuration.
 	if s.standbys > 0 {
 		spec["availability"] = map[string]any{
-			"numberOfStandbys":   int64(s.standbys),
-			"enableAutoFailover": true,
-			"enableAutoHeal":     true,
+			"numberOfStandbys": int64(s.standbys),
+			// Required by the CRD, with no default, so leaving it out risks
+			// "spec.availability.enableStandbyAsReadReplica: Required value"
+			// from schema validation. False keeps the standby for failover
+			// only, which is what --standbys alone asks for; serving reads
+			// from it is a separate decision.
+			"enableStandbyAsReadReplica": false,
+			"enableAutoFailover":         true,
+			"enableAutoHeal":             true,
 		}
 	}
 

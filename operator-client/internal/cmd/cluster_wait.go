@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -58,8 +59,22 @@ func waitForClusterPhase(ctx context.Context, cmd *cobra.Command, opts *GlobalOp
 	defer cancel()
 
 	// Cancelling waitCtx is what breaks ForPhaseWatch out early.
+	//
+	// The goroutine has to be joined rather than abandoned: it reads package
+	// state that tests replace around a call, so letting it outlive the wait
+	// is a data race -- `go test -race` reports one -- and it would go on
+	// polling the API server after the command had moved on.
 	problems := make(chan error, 1)
-	go watchForProblems(waitCtx, cancel, c, name, problems)
+	var watcher sync.WaitGroup
+	watcher.Add(1)
+	go func() {
+		defer watcher.Done()
+		watchForProblems(waitCtx, cancel, c, name, problems)
+	}()
+	defer func() {
+		cancel()
+		watcher.Wait()
+	}()
 
 	done, err := wait.ForPhaseWatch(waitCtx, c, wait.Options{
 		GVR:     k8s.DBClusterGVR,
@@ -96,7 +111,7 @@ func waitForClusterPhase(ctx context.Context, cmd *cobra.Command, opts *GlobalOp
 			return fmt.Errorf("waiting for cluster %s: %w", name, c.FormatErr(err))
 		}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Cluster %q is %s.\n", done.GetName(), wait.Phase(done))
+	fmt.Fprintf(opts.Prose(cmd), "Cluster %q is %s.\n", done.GetName(), wait.Phase(done))
 	return nil
 }
 
