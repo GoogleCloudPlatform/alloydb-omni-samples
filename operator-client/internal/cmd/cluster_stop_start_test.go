@@ -204,14 +204,19 @@ func TestClusterPowerNoOpWhenAlreadyInState(t *testing.T) {
 
 func TestClusterStopPatchCarriesResourceVersion(t *testing.T) {
 	// Guards against overwriting a change made while the user was at the prompt.
-	opts, dyn, _ := crudFakes(t, []runtime.Object{poweredDBCluster("my-db", clusterReadyPhase, false)})
+	db := poweredDBCluster("my-db", clusterReadyPhase, false)
+	// The fake tracker does not assign resourceVersions, so set the one the
+	// patch is expected to echo. Asserting the value, not just the field,
+	// keeps the test honest about which version was read.
+	db.SetResourceVersion("42")
+	opts, dyn, _ := crudFakes(t, []runtime.Object{db})
 	if _, err := runCRUDCmd(t, newClusterStopCommand(opts), "my-db", "--no-wait"); err != nil {
 		t.Fatal(err)
 	}
 	var sawRV bool
 	for _, a := range dyn.Actions() {
 		if p, ok := a.(k8stesting.PatchAction); ok && a.GetVerb() == "patch" {
-			if strings.Contains(string(p.GetPatch()), "resourceVersion") {
+			if strings.Contains(string(p.GetPatch()), `"resourceVersion":"42"`) {
 				sawRV = true
 			}
 		}
