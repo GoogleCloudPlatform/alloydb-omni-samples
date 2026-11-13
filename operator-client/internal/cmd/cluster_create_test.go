@@ -451,6 +451,73 @@ func TestClusterCreateWaitReportsCriticalIncidents(t *testing.T) {
 	}
 }
 
+func TestClusterCreateHASpecSatisfiesTheCRD(t *testing.T) {
+	// spec.availability requires enableStandbyAsReadReplica and the CRD gives
+	// it no default, so omitting it risks the API server rejecting every
+	// --standbys create with "Required value".
+	opts, dyn, _ := crudFakes(t, nil)
+	if _, err := runCRUDCmd(t, newClusterCreateCommand(opts),
+		"my-db", "--version", "16.8.0", "--standbys", "1", "--no-wait"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := dyn.Resource(k8s.DBClusterGVR).Namespace(testNamespace).
+		Get(context.TODO(), "my-db", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	av, found, err := unstructured.NestedMap(db.Object, "spec", "availability")
+	if err != nil || !found {
+		t.Fatalf("--standbys should write spec.availability (found %v): %v", found, err)
+	}
+	if _, ok := av["enableStandbyAsReadReplica"]; !ok {
+		t.Fatalf("spec.availability must carry enableStandbyAsReadReplica: %v", av)
+	}
+	if av["numberOfStandbys"] != int64(1) {
+		t.Fatalf("numberOfStandbys = %v, want int64 1", av["numberOfStandbys"])
+	}
+}
+
+func TestClusterCreateRejectsTooManyStandbysBeforeWritingAnything(t *testing.T) {
+	// The CRD allows at most five. Catching it here matters because the admin
+	// secret is written first: a server-side rejection means a create that
+	// half happened and then had to roll back.
+	opts, dyn, typed := crudFakes(t, nil)
+	_, err := runCRUDCmd(t, newClusterCreateCommand(opts),
+		"my-db", "--version", "16.8.0", "--standbys", "6", "--no-wait")
+	if err == nil {
+		t.Fatal("--standbys 6 should be rejected")
+	}
+	if !strings.Contains(err.Error(), "between 0 and 5") {
+		t.Fatalf("error should name the limit: %v", err)
+	}
+	if len(typed.Actions()) != 0 || len(dyn.Actions()) != 0 {
+		t.Fatal("a rejected flag must not reach the API server at all")
+	}
+}
+
+func TestClusterCreateJSONLeavesStdoutParseable(t *testing.T) {
+	// The summary and the lines around it used to share stdout, so -o json
+	// emitted a document followed by prose: not JSON at all.
+	opts, _, _ := crudFakes(t, nil)
+	opts.Output = output.OutputJSON
+
+	stdout, stderr, err := runCRUDCmdSplit(t, newClusterCreateCommand(opts),
+		"my-db", "--version", "16.8.0", "--no-wait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("-o json should leave stdout parseable: %v\nstdout: %s", err, stdout)
+	}
+	if got["name"] != "my-db" {
+		t.Fatalf("summary = %v", got)
+	}
+	if !strings.Contains(stderr, "Not waiting") {
+		t.Fatalf("the --no-wait note should still reach stderr:\n%s", stderr)
+	}
+}
+
 func TestClusterCreateJSONSummary(t *testing.T) {
 	opts, _, _ := crudFakes(t, nil)
 	opts.Output = output.OutputJSON
