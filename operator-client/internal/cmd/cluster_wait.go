@@ -30,12 +30,36 @@ const (
 	// unschedulable pod is treated as fatal. One sighting is normal.
 	unschedulableStrikes = 3
 
-	// incidentStrikes is the same idea for criticalIncidents. Omni posts
-	// transient ones -- a stop/start cycle can briefly show
-	// "[DBSE0001] Internal. General Controller Error." and then recover -- so
-	// a single sighting must not end the wait.
-	incidentStrikes = 2
+	// incidentStrikes is the same idea for criticalIncidents, and it has to be
+	// this patient because Omni posts transient ones freely. Sampled every
+	// four seconds through one live stop/start cycle: [DBSE0001] "Internal.
+	// General Controller Error." was up for around ten seconds while the
+	// cluster was reconciling, and [DBSE0304] for twenty-five more once it was
+	// already DBClusterReady. The operator withdrew both and the cluster
+	// stayed healthy.
+	//
+	// At two strikes -- twenty seconds of persistence -- that noise was inside
+	// the threshold, and a restart duly failed on an incident the operator
+	// dropped moments later. Six puts the bar at fifty seconds, roughly twice
+	// the longest transient seen. A genuinely stuck cluster still reports,
+	// just a little later; the opposite mistake abandons a healthy one.
+	incidentStrikes = 6
 )
+
+// schedulingIncidentCodes are the incidents the operator posts about placing
+// the instance pod, and the ones adbo does not end a wait on.
+//
+// A live operator posts DBSE0085 for a pod the scheduler has already placed --
+// PodScheduled stays True the whole time -- and withdraws it some forty
+// seconds later. Ending the wait on it aborted creates that were about to
+// succeed. schedulingFailure below asks the scheduler instead: it is the
+// authority on whether a pod fits, it is given three strikes rather than two,
+// and its message names what was actually short. A genuinely unschedulable
+// pod still ends the wait, just with the better reason.
+var schedulingIncidentCodes = map[string]bool{
+	"DBSE0084": true, // Platform: Insufficient resources.
+	"DBSE0085": true, // Platform: Pod is unschedulable.
+}
 
 // incidentPollInterval is how often a wait re-reads the cluster looking for a
 // failure. Polling is necessary here: criticalIncidents does not move
@@ -98,6 +122,14 @@ func waitForClusterPhase(ctx context.Context, cmd *cobra.Command, opts *GlobalOp
 		switch {
 		case errors.As(err, &failed):
 			return fmt.Errorf("cluster %s failed: %s", failed.Name, failed.Reason)
+		case errors.Is(ctx.Err(), context.Canceled):
+			// A Ctrl+C. client-go reports that as "timed out waiting for the
+			// condition", which is the wrong story twice over: nothing timed
+			// out, and the change has already been accepted, so the operator
+			// carries on whether adbo is watching or not. Wrapping
+			// context.Canceled keeps that legible to callers.
+			return fmt.Errorf("stopped waiting for cluster %q to reach %s; the operator carries on without adbo, so check `adbo status %s`: %w",
+				name, wantPhase, name, context.Canceled)
 		case errors.Is(err, context.DeadlineExceeded):
 			// Fallback: the watcher above normally catches these first, but its
 			// reads can fail, so check the object the phase watch last saw.
@@ -134,7 +166,7 @@ func watchForProblems(ctx context.Context, cancel context.CancelFunc, c *k8s.Cli
 		if err != nil {
 			continue // transient read failure; the phase watch owns real errors
 		}
-		if msgs := criticalIncidentMessages(db); len(msgs) > 0 {
+		if msgs := fatalIncidentMessages(db); len(msgs) > 0 {
 			incidents++
 			if incidents >= incidentStrikes {
 				found <- fmt.Errorf("cluster %q reported critical incidents while waiting:\n  - %s",
@@ -193,24 +225,55 @@ func schedulingFailure(ctx context.Context, c *k8s.Clients, cluster string) stri
 	return ""
 }
 
-// criticalIncidentMessages renders status.criticalIncidents as "[code] message".
-// db may be nil: the waiter returns no object if it never observed one.
-func criticalIncidentMessages(db *unstructured.Unstructured) []string {
+// incident is one entry of status.criticalIncidents.
+type incident struct{ code, message string }
+
+// String renders an incident the way adbo reports it.
+func (i incident) String() string {
+	if i.code == "" {
+		return i.message
+	}
+	return "[" + i.code + "] " + i.message
+}
+
+// criticalIncidents reads status.criticalIncidents. db may be nil: the waiter
+// returns no object if it never observed one.
+func criticalIncidents(db *unstructured.Unstructured) []incident {
 	if db == nil {
 		return nil
 	}
-	incidents, _, _ := unstructured.NestedSlice(db.Object, "status", "criticalIncidents")
-	var msgs []string
-	for _, it := range incidents {
+	raw, _, _ := unstructured.NestedSlice(db.Object, "status", "criticalIncidents")
+	var incidents []incident
+	for _, it := range raw {
 		m, ok := it.(map[string]any)
 		if !ok {
 			continue
 		}
+		code, _ := m["code"].(string)
 		msg, _ := m["message"].(string)
-		if code, ok := m["code"].(string); ok && code != "" {
-			msg = "[" + code + "] " + msg
+		incidents = append(incidents, incident{code: code, message: msg})
+	}
+	return incidents
+}
+
+// criticalIncidentMessages renders every incident, for reporting to the user.
+func criticalIncidentMessages(db *unstructured.Unstructured) []string {
+	var msgs []string
+	for _, in := range criticalIncidents(db) {
+		msgs = append(msgs, in.String())
+	}
+	return msgs
+}
+
+// fatalIncidentMessages renders the incidents that should end a wait, which is
+// every one the scheduler is not the better judge of.
+func fatalIncidentMessages(db *unstructured.Unstructured) []string {
+	var msgs []string
+	for _, in := range criticalIncidents(db) {
+		if schedulingIncidentCodes[in.code] {
+			continue
 		}
-		msgs = append(msgs, msg)
+		msgs = append(msgs, in.String())
 	}
 	return msgs
 }
