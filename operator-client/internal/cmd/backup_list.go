@@ -3,17 +3,18 @@ package cmd
 import (
 	"fmt"
 	"sort"
-	"time"
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/util/duration"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/wait"
 )
+
+// backupTableHeaders match the Backup CRD printer columns, plus name and age.
+var backupTableHeaders = []string{"NAME", "PHASE", "TYPE", "AGE"}
 
 // newBackupListCommand is `adbo backup list [CLUSTER_NAME]`.
 func newBackupListCommand(opts *GlobalOptions) *cobra.Command {
@@ -54,16 +55,21 @@ func runBackupList(cmd *cobra.Command, opts *GlobalOptions, cluster string, limi
 	}
 
 	mine := backupsForCluster(list.Items, cluster, limit)
-	table := output.Table{Headers: []string{"NAME", "PHASE", "AGE"}}
+	table := output.Table{Headers: backupTableHeaders}
 	for i := range mine {
 		b := &mine[i] // index, not range copy: Unstructured methods need a pointer
-		table.Rows = append(table.Rows, []string{
-			b.GetName(),
-			wait.Phase(b),
-			duration.HumanDuration(time.Since(b.GetCreationTimestamp().Time)),
-		})
+		table.Rows = append(table.Rows, backupTableRow(b))
 	}
 	return output.Print(cmd.OutOrStdout(), opts.Output, table, mine)
+}
+
+func backupTableRow(b *unstructured.Unstructured) []string {
+	return []string{
+		b.GetName(),
+		wait.Phase(b),
+		physicalBackupType(b),
+		resourceAge(b),
+	}
 }
 
 func backupsForCluster(items []unstructured.Unstructured, cluster string, limit int) []unstructured.Unstructured {

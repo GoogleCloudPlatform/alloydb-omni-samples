@@ -61,26 +61,67 @@ func Phase(obj *unstructured.Unstructured) string {
 	return p
 }
 
-// Reason reads a human-readable failure explanation. Omni often hides the
-// real cause in status.message or conditions rather than the default view.
+// reasonUnknown is the fallback when a failed object has no incident or
+// False condition. Point at adbo; this client does not shell out to kubectl.
+const reasonUnknown = "no reason reported; run adbo -o yaml for details"
+
+// Reason reads a human-readable failure explanation.
+// Backup and DBCluster have no status.message. The operator records failures
+// in status.criticalIncidents and in conditions whose status is False.
+// A True condition's message describes a healthy state, so it is not a cause.
 func Reason(obj *unstructured.Unstructured) string {
 	if obj == nil {
-		return "no reason reported; run kubectl describe for details"
+		return reasonUnknown
 	}
+	if lines := criticalIncidents(obj); len(lines) > 0 {
+		return strings.Join(lines, "; ")
+	}
+	if msg := falseConditionMessage(obj); msg != "" {
+		return msg
+	}
+	// Other resources may still set status.message. Omni Backup and DBCluster do not.
 	if msg, ok, _ := unstructured.NestedString(obj.Object, "status", "message"); ok && msg != "" {
 		return msg
 	}
+	return reasonUnknown
+}
+
+// criticalIncidents reads status.criticalIncidents. Backup and DBCluster
+// record failures there; they have no status.message.
+func criticalIncidents(obj *unstructured.Unstructured) []string {
+	items, _, _ := unstructured.NestedSlice(obj.Object, "status", "criticalIncidents")
+	var lines []string
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		code, _ := m["code"].(string)
+		msg, _ := m["message"].(string)
+		line := strings.TrimSpace(code + " " + msg)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func falseConditionMessage(obj *unstructured.Unstructured) string {
 	conds, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
 	for _, c := range conds {
 		m, ok := c.(map[string]interface{})
 		if !ok {
 			continue
 		}
+		status, _ := m["status"].(string)
+		if status != string(metav1.ConditionFalse) {
+			continue
+		}
 		if msg, _ := m["message"].(string); msg != "" {
 			return msg
 		}
 	}
-	return "no reason reported; run kubectl describe for details"
+	return ""
 }
 
 // ForPhaseWatch watches one object until its status.phase is in Success

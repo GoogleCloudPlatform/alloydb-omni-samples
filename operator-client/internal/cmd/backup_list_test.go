@@ -11,12 +11,16 @@ import (
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 )
 
-func backupCR(name, cluster string) *unstructured.Unstructured {
+func backupCR(name, cluster, backupType string) *unstructured.Unstructured {
+	spec := map[string]any{"dbclusterRef": cluster}
+	if backupType != "" {
+		spec["physicalBackupSpec"] = map[string]any{"backupType": backupType}
+	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": k8s.APIVersion,
 		"kind":       "Backup",
 		"metadata":   map[string]any{"name": name, "namespace": "adbo-eugene"},
-		"spec":       map[string]any{"dbclusterRef": cluster},
+		"spec":       spec,
 	}}
 }
 
@@ -25,8 +29,8 @@ func TestRunBackupListFiltersCluster(t *testing.T) {
 		Output: output.OutputTable,
 		NewClients: func() (*k8s.Clients, error) {
 			return fakeClients(
-				backupCR("mine-1", "my-db"),
-				backupCR("other-1", "other"),
+				backupCR("mine-1", "my-db", "incr"),
+				backupCR("other-1", "other", "full"),
 			), nil
 		},
 	}
@@ -39,10 +43,10 @@ func TestRunBackupListFiltersCluster(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := out.String()
-	if !strings.Contains(s, "mine-1") {
-		t.Fatalf("missing own backup: %q", s)
+	if !strings.Contains(s, "mine-1") || !strings.Contains(s, "TYPE") || !strings.Contains(s, "incr") {
+		t.Fatalf("missing own backup or type: %q", s)
 	}
-	if strings.Contains(s, "other-1") {
+	if strings.Contains(s, "other-1") || strings.Contains(s, "full") {
 		t.Fatalf("leaked other cluster: %q", s)
 	}
 }

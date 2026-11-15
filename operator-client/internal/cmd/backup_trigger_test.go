@@ -3,14 +3,17 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 )
 
 func fakeClients(objects ...runtime.Object) *k8s.Clients {
@@ -42,13 +45,21 @@ func dbcluster(name string, stopped bool, phase string) *unstructured.Unstructur
 }
 
 func TestRunBackupTriggerClusterMissing(t *testing.T) {
+	c := fakeClients()
+	c.Context = ""
 	opts := &GlobalOptions{
-		NewClients: func() (*k8s.Clients, error) { return fakeClients(), nil },
+		NewClients: func() (*k8s.Clients, error) { return c, nil },
 	}
 	cmd := newBackupTriggerCommand(opts)
 	cmd.SetArgs([]string{"my-db"})
-	if err := cmd.Execute(); err == nil {
+	err := cmd.Execute()
+	if err == nil {
 		t.Fatal("expected missing cluster to fail")
+	}
+	// FormatErr owns this 404. An empty context must not be printed, and a
+	// missing CRD must not be rewritten as "cluster not found".
+	if !strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), `context ""`) {
+		t.Fatalf("got %v", err)
 	}
 }
 
@@ -99,15 +110,69 @@ func TestRunBackupTriggerNoWait(t *testing.T) {
 		},
 	}
 	cmd := newBackupTriggerCommand(opts)
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"my-db", "--no-wait"})
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"my-db", "--no-wait", "--type", "incr"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(out.Bytes(), []byte("created")) {
-		t.Fatalf("got %q", out.String())
+	// The fake client does not expand generateName, so the name cell is blank.
+	// A real API server returns metadata.name; here we check the table shape.
+	if !bytes.Contains(stdout.Bytes(), []byte("NAME")) || !bytes.Contains(stdout.Bytes(), []byte("TYPE")) || !bytes.Contains(stdout.Bytes(), []byte("incr")) {
+		t.Fatalf("stdout %q", stdout.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("created")) {
+		t.Fatalf("stderr %q", stderr.String())
+	}
+}
+
+func TestRunBackupTriggerNoWaitJSON(t *testing.T) {
+	opts := &GlobalOptions{
+		Output: output.OutputJSON,
+		NewClients: func() (*k8s.Clients, error) {
+			return fakeClients(dbcluster("my-db", false, "Ready")), nil
+		},
+	}
+	cmd := newBackupTriggerCommand(opts)
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"my-db", "--no-wait", "--type", "diff"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte(`"kind": "Backup"`)) || !bytes.Contains(stdout.Bytes(), []byte(`"backupType": "diff"`)) {
+		t.Fatalf("stdout %s", stdout.String())
+	}
+	if bytes.Contains(stdout.Bytes(), []byte("created")) {
+		t.Fatalf("json stdout should be the Backup object, got %s", stdout.String())
+	}
+}
+
+func TestRunBackupTriggerDeleting(t *testing.T) {
+	obj := dbcluster("my-db", false, "Ready")
+	now := metav1.Now()
+	obj.SetDeletionTimestamp(&now)
+	assertTriggerRejected(t, obj, "being deleted")
+}
+
+func TestRunBackupTriggerSpecIsDeleted(t *testing.T) {
+	obj := dbcluster("my-db", false, "Ready")
+	obj.Object["spec"].(map[string]any)["isDeleted"] = true
+	assertTriggerRejected(t, obj, "spec.isDeleted")
+}
+
+func assertTriggerRejected(t *testing.T, obj *unstructured.Unstructured, want string) {
+	t.Helper()
+	opts := &GlobalOptions{
+		NewClients: func() (*k8s.Clients, error) { return fakeClients(obj), nil },
+	}
+	cmd := newBackupTriggerCommand(opts)
+	cmd.SetArgs([]string{"my-db", "--no-wait"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v", err)
 	}
 }
 
@@ -119,6 +184,45 @@ func TestRunBackupTriggerBadType(t *testing.T) {
 	cmd.SetArgs([]string{"my-db", "--type", "weekly"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected --type to fail")
+	}
+}
+
+func TestResolveBackupPlanExplicitMatch(t *testing.T) {
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": k8s.APIVersion,
+		"kind":       "BackupPlan",
+		"metadata":   map[string]any{"name": "other-plan", "namespace": "adbo-eugene"},
+		"spec":       map[string]any{"dbclusterRef": "my-db"},
+	}}
+	c := fakeClients(existing)
+	name, err := resolveBackupPlan(context.Background(), c, "my-db", "other-plan", &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "other-plan" {
+		t.Fatalf("plan name = %q", name)
+	}
+}
+
+func TestResolveBackupPlanExplicitWrongCluster(t *testing.T) {
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": k8s.APIVersion,
+		"kind":       "BackupPlan",
+		"metadata":   map[string]any{"name": "other-plan", "namespace": "adbo-eugene"},
+		"spec":       map[string]any{"dbclusterRef": "other"},
+	}}
+	c := fakeClients(existing)
+	_, err := resolveBackupPlan(context.Background(), c, "my-db", "other-plan", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "other") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestResolveBackupPlanExplicitMissing(t *testing.T) {
+	c := fakeClients()
+	_, err := resolveBackupPlan(context.Background(), c, "my-db", "missing", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("got %v", err)
 	}
 }
 

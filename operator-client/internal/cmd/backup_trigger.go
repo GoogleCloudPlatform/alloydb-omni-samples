@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/wait"
 )
 
@@ -79,11 +80,10 @@ func runBackupTrigger(cmd *cobra.Command, opts *GlobalOptions, in triggerOpts) e
 		return err
 	}
 
+	// FormatErr distinguishes a missing DBCluster from a missing CRD
+	// ("the server could not find the requested resource") and omits an
+	// empty context. A local IsNotFound check hides both.
 	cluster, err := c.In(k8s.DBClusterGVR).Get(ctx, in.cluster, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("cluster %q not found in namespace %q (try -n or --context %q)",
-			in.cluster, c.Namespace, c.Context)
-	}
 	if err != nil {
 		return c.FormatErr(err)
 	}
@@ -100,16 +100,24 @@ func runBackupTrigger(cmd *cobra.Command, opts *GlobalOptions, in triggerOpts) e
 	if err != nil {
 		return fmt.Errorf("creating backup: %w", c.FormatErr(err))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "backup %s created in namespace %q\n", created.GetName(), c.Namespace)
+	// Progress stays on stderr so -o json|yaml on stdout is a single Backup object.
+	fmt.Fprintf(cmd.ErrOrStderr(), "backup %s created in namespace %q\n", created.GetName(), c.Namespace)
 	if !in.wait {
-		return nil
+		return printBackup(cmd.OutOrStdout(), opts.Output, created)
 	}
 	return waitForBackup(ctx, cmd, opts, c, created.GetName())
 }
 
-// clusterReadyForBackup fails before Create: a stopped cluster accepts the
-// Backup CR then deletes it, which wait reports as "was deleted while waiting".
+// clusterReadyForBackup fails before a BackupPlan or Backup is created.
+// A stopped or deleting cluster accepts the Backup CR then deletes it,
+// which wait reports as "was deleted while waiting".
 func clusterReadyForBackup(cluster *unstructured.Unstructured, name string) error {
+	if cluster.GetDeletionTimestamp() != nil {
+		return fmt.Errorf("cluster %q is being deleted", name)
+	}
+	if deleted, _, _ := unstructured.NestedBool(cluster.Object, "spec", "isDeleted"); deleted {
+		return fmt.Errorf("cluster %q is marked deleted (spec.isDeleted)", name)
+	}
 	if stopped, _, _ := unstructured.NestedBool(cluster.Object, "spec", "primarySpec", "isStopped"); stopped {
 		return fmt.Errorf("cluster %q is stopped; start it before taking a backup", name)
 	}
@@ -163,8 +171,17 @@ func waitForBackup(ctx context.Context, cmd *cobra.Command, opts *GlobalOptions,
 			return fmt.Errorf("waiting for backup %s: %w", name, c.FormatErr(err))
 		}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "backup %s %s\n", done.GetName(), wait.Phase(done))
-	return nil
+	return printBackup(cmd.OutOrStdout(), opts.Output, done)
+}
+
+// printBackup emits the Backup. Table output matches `backup list`;
+// json and yaml emit the object itself so -o is not ignored.
+func printBackup(w io.Writer, format string, obj *unstructured.Unstructured) error {
+	table := output.Table{
+		Headers: backupTableHeaders,
+		Rows:    [][]string{backupTableRow(obj)},
+	}
+	return output.Print(w, format, table, obj)
 }
 
 // resolveBackupPlan picks the BackupPlan for this cluster:
@@ -173,12 +190,14 @@ func waitForBackup(ctx context.Context, cmd *cobra.Command, opts *GlobalOptions,
 //  3. create <cluster>-backupplan (paused, so we do not start cron backups)
 func resolveBackupPlan(ctx context.Context, c *k8s.Clients, cluster, planName string, errOut io.Writer) (string, error) {
 	if planName != "" {
-		if _, err := c.In(k8s.BackupPlanGVR).Get(ctx, planName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("backup plan %q not found in namespace %q", planName, c.Namespace)
-		} else if err != nil {
+		planObj, err := c.In(k8s.BackupPlanGVR).Get(ctx, planName, metav1.GetOptions{})
+		if err != nil {
 			return "", c.FormatErr(err)
 		}
-		return planName, nil
+		if ref := dbclusterRef(planObj); ref != cluster {
+			return "", fmt.Errorf("backup plan %q is for cluster %q, not %q", planObj.GetName(), ref, cluster)
+		}
+		return planObj.GetName(), nil
 	}
 
 	list, err := c.In(k8s.BackupPlanGVR).List(ctx, metav1.ListOptions{})
