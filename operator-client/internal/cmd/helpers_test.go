@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"testing"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -10,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/config"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 )
 
@@ -52,4 +54,17 @@ func testCommand(buf *bytes.Buffer) *cobra.Command {
 	cmd.SetOut(buf)
 	cmd.SetContext(context.Background())
 	return cmd
+}
+
+// saveTestSelection writes a selection to the config file under XDG_CONFIG_HOME.
+func saveTestSelection(t *testing.T, kubeContext, namespace, name string) {
+	t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetSelectedCluster(kubeContext, namespace, name)
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
 }

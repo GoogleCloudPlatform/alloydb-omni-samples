@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 )
 
 func TestClientsUsesFactory(t *testing.T) {
@@ -33,17 +36,60 @@ func TestClientsRequiresConfig(t *testing.T) {
 }
 
 func TestClusterName(t *testing.T) {
-	opts := &GlobalOptions{SelectedCluster: "saved"}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	opts := fakeOpts(output.OutputTable)
 	name, err := opts.ClusterName([]string{"explicit"})
 	if err != nil || name != "explicit" {
 		t.Fatalf("positional: got %q, %v", name, err)
 	}
+	if _, err := opts.ClusterName(nil); err == nil {
+		t.Fatal("ClusterName with nothing selected should fail")
+	}
+	saveTestSelection(t, "test-ctx", "default", "saved")
 	name, err = opts.ClusterName(nil)
 	if err != nil || name != "saved" {
 		t.Fatalf("selected: got %q, %v", name, err)
 	}
-	if _, err := (&GlobalOptions{}).ClusterName(nil); err == nil {
-		t.Fatal("empty ClusterName should fail")
+}
+
+func TestClusterNameInMemoryOverride(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	saveTestSelection(t, "test-ctx", "default", "saved")
+	opts := fakeOpts(output.OutputTable)
+	opts.SelectedCluster = "override"
+	if name, err := opts.ClusterName(nil); err != nil || name != "override" {
+		t.Fatalf("SelectedCluster should win over the config file; got %q, %v", name, err)
+	}
+	if name, _ := opts.ClusterName([]string{"explicit"}); name != "explicit" {
+		t.Fatalf("a positional name should still win; got %q", name)
+	}
+}
+
+func TestClusterNameReportsCorruptConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if err := os.MkdirAll(filepath.Join(dir, "adbo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "adbo", "config.yaml"), []byte("selectedClusters: [bad]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fakeOpts(output.OutputTable).ClusterName(nil)
+	if err == nil || strings.Contains(err.Error(), "no cluster specified") {
+		t.Fatalf("want the config error, not the generic hint; got %v", err)
+	}
+}
+
+func TestClientsAreBuiltOnce(t *testing.T) {
+	calls := 0
+	opts := &GlobalOptions{NewClients: func() (*k8s.Clients, error) {
+		calls++
+		return &k8s.Clients{}, nil
+	}}
+	_, _ = opts.Clients()
+	_, _ = opts.Clients()
+	if calls != 1 {
+		t.Fatalf("NewClients called %d times, want 1", calls)
 	}
 }
 
