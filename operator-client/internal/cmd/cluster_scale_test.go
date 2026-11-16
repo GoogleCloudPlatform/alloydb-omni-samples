@@ -238,6 +238,57 @@ func TestPlanScaleStandbysSetsRequiredReadReplicaField(t *testing.T) {
 	}
 }
 
+func TestPlanScaleUsesLowDowntimeOnlyWithReadyStandby(t *testing.T) {
+	ldtm := func(db *unstructured.Unstructured, f scaleFlags) string {
+		t.Helper()
+		_, patch, err := planScale(db, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, _, _ := unstructured.NestedString(patch, "metadata", "annotations", ldtmAnnotation)
+		return v
+	}
+	cpu4 := scaleFlags{cpu: "4", standbys: -1}
+
+	// sizedCluster has HAReady=True but no standbys.
+	if v := ldtm(sizedCluster("my-db"), cpu4); v != "" {
+		t.Errorf("no standbys: annotation = %q, want none", v)
+	}
+
+	withStandby := sizedCluster("my-db")
+	_ = unstructured.SetNestedField(withStandby.Object, int64(1), standbysPath...)
+	if v := ldtm(withStandby, cpu4); v != "true" {
+		t.Errorf("ready standby: annotation = %q, want true", v)
+	}
+
+	notReady := sizedCluster("my-db")
+	_ = unstructured.SetNestedField(notReady.Object, int64(1), standbysPath...)
+	_ = unstructured.SetNestedSlice(notReady.Object, []any{
+		map[string]any{"type": "HAReady", "status": "False"},
+	}, "status", "conditions")
+	if v := ldtm(notReady, cpu4); v != "" {
+		t.Errorf("standby not ready: annotation = %q, want none", v)
+	}
+
+	// Nothing to change means no patch, so no annotation either.
+	if v := ldtm(withStandby, scaleFlags{cpu: "2", standbys: -1}); v != "" {
+		t.Errorf("no-op scale: annotation = %q, want none", v)
+	}
+}
+
+func TestClusterScaleSendsLowDowntimeAnnotation(t *testing.T) {
+	db := sizedCluster("my-db")
+	_ = unstructured.SetNestedField(db.Object, int64(1), standbysPath...)
+	opts := fakeOpts(output.OutputTable, db)
+	var out, errOut bytes.Buffer
+	if err := runClusterScale(scaleCmd(&out, &errOut, "y\n"), opts, "my-db", scaleFlags{memory: "32Gi", standbys: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if got := getCluster(t, opts, "my-db").GetAnnotations()[ldtmAnnotation]; got != "true" {
+		t.Errorf("cluster annotation %s = %q, want true", ldtmAnnotation, got)
+	}
+}
+
 func TestClusterScaleJSONPrintsUpdatedCluster(t *testing.T) {
 	opts := fakeOpts(output.OutputJSON, sizedCluster("my-db"))
 	opts.Yes = true

@@ -50,7 +50,9 @@ func backup(name, phase, message string) *unstructured.Unstructured {
 		status["phase"] = phase
 	}
 	if message != "" {
-		status["message"] = message
+		status["criticalIncidents"] = []any{
+			map[string]any{"code": "DBSE1012", "message": message},
+		}
 	}
 	if len(status) > 0 {
 		obj["status"] = status
@@ -92,8 +94,42 @@ func TestWatchUntilFailed(t *testing.T) {
 	if !errors.As(err, &failed) {
 		t.Fatalf("got %v", err)
 	}
-	if failed.Reason != "disk full" {
+	if failed.Reason != "DBSE1012 disk full" {
 		t.Fatalf("reason = %q", failed.Reason)
+	}
+}
+
+func TestReasonSkipsHealthyCondition(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{"type": "Ready", "status": "True", "message": "backup is healthy"},
+				map[string]any{"type": "BackupReady", "status": "False", "message": "upload failed"},
+			},
+		},
+	}}
+	if got := Reason(obj); got != "upload failed" {
+		t.Fatalf("reason = %q", got)
+	}
+}
+
+func TestReasonIgnoresTrueCondition(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{"type": "Ready", "status": "True", "message": "backup is healthy"},
+			},
+		},
+	}}
+	if got := Reason(obj); strings.Contains(got, "healthy") || strings.Contains(got, "kubectl") || !strings.Contains(got, "adbo") {
+		t.Fatalf("reason = %q", got)
+	}
+}
+
+func TestReasonNilMentionsAdbo(t *testing.T) {
+	got := Reason(nil)
+	if strings.Contains(got, "kubectl") || !strings.Contains(got, "adbo") {
+		t.Fatalf("reason = %q", got)
 	}
 }
 
