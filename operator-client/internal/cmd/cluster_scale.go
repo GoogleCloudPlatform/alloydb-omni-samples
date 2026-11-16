@@ -23,9 +23,8 @@ import (
 // dataDisk is the DBCluster disk that holds the database files.
 const dataDisk = "DataDisk"
 
-// scaleReadyPhase is DBCluster status.phase once the operator has
-// finished reconciling.
 const scaleReadyPhase = "DBClusterReady"
+const ldtmAnnotation = "dbcluster.dbadmin.goog/enableLDTM"
 
 var (
 	resourcesPath   = []string{"spec", "primarySpec", "resources"}
@@ -356,7 +355,17 @@ func planScale(db *unstructured.Unstructured, f scaleFlags) ([]change, map[strin
 			changes = append(changes, change{"standbys", strconv.FormatInt(cur, 10), strconv.Itoa(f.standbys)})
 		}
 	}
+	if len(changes) > 0 && hasReadyStandby(db) {
+		if err := unstructured.SetNestedField(patch, "true", "metadata", "annotations", ldtmAnnotation); err != nil {
+			return nil, nil, err
+		}
+	}
 	return changes, patch, nil
+}
+
+func hasReadyStandby(db *unstructured.Unstructured) bool {
+	n, _, _ := unstructured.NestedInt64(db.Object, standbysPath...)
+	return n >= 1 && k8s.ConditionStatus(db, "HAReady") == "True"
 }
 
 // planDisk grows the DataDisk in patch. A merge patch replaces lists
