@@ -14,6 +14,12 @@ go build -o bin/adbo ./cmd/adbo
 ./bin/adbo --help
 ```
 
+Release builds stamp the version that `adbo version` prints:
+
+```bash
+go build -ldflags "-X github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/version.Version=v0.1.0" -o bin/adbo ./cmd/adbo
+```
+
 ## How to add a command
 
 Register `<group>_<verb>` commands on their **group** command (`cluster.go`, `backup.go`), not in `root.go`, so parallel PRs do not collide. Top-level commands from the spec (`status`, `connect`, `logs`, `restore`, `failover`, `switchover`, `doctor`, `version`) are the only ones added to `root.AddCommand(...)`, one line each. `support export` should get its own `support` group.
