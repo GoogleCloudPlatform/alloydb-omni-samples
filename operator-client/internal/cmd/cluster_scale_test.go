@@ -274,7 +274,7 @@ func TestClusterScaleConflictIsReported(t *testing.T) {
 // readyStatus marks db Ready at observedGeneration og, with allocated
 // resources matching sizedCluster's spec unless overridden.
 func readyStatus(db *unstructured.Unstructured, og int64, allocated map[string]any) {
-	_ = unstructured.SetNestedField(db.Object, clusterReadyPhase, "status", "phase")
+	_ = unstructured.SetNestedField(db.Object, scaleReadyPhase, "status", "phase")
 	_ = unstructured.SetNestedField(db.Object, og, "status", "observedGeneration")
 	if allocated != nil {
 		_ = unstructured.SetNestedField(db.Object, allocated, "status", "primary", "allocatedResources")

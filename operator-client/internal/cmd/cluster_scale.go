@@ -23,9 +23,9 @@ import (
 // dataDisk is the DBCluster disk that holds the database files.
 const dataDisk = "DataDisk"
 
-// clusterReadyPhase is DBCluster status.phase once the operator has
+// scaleReadyPhase is DBCluster status.phase once the operator has
 // finished reconciling.
-const clusterReadyPhase = "DBClusterReady"
+const scaleReadyPhase = "DBClusterReady"
 
 var (
 	resourcesPath   = []string{"spec", "primarySpec", "resources"}
@@ -221,7 +221,7 @@ func scaleDone(generation int64, patch map[string]any) wait.Condition {
 		if og, found, _ := unstructured.NestedInt64(db.Object, "status", "observedGeneration"); found && og < generation {
 			return false, nil
 		}
-		if phase != clusterReadyPhase {
+		if phase != scaleReadyPhase {
 			return false, nil
 		}
 		if !allocatedMatches(db, patch) {
