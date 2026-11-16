@@ -39,6 +39,18 @@ func TestRootHelpListsFlags(t *testing.T) {
 	}
 }
 
+func TestGroupRejectsUnknownVerb(t *testing.T) {
+	for _, args := range [][]string{{"cluster", "delte"}, {"backup", "trigerr"}} {
+		root := NewRootCommand()
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(args)
+		if err := root.Execute(); err == nil {
+			t.Errorf("%v: expected an unknown command error", args)
+		}
+	}
+}
+
 func TestRootRejectsInvalidOutput(t *testing.T) {
 	root := NewRootCommand()
 	root.SetArgs([]string{"-o", "xml"})

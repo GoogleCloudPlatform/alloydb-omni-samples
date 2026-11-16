@@ -28,7 +28,7 @@ Register `<group>_<verb>` commands on their **group** command (`cluster.go`, `ba
    return output.Print(cmd.OutOrStdout(), opts.Output, table, list.Items)
    ```
 
-   For async ops (`create`, `trigger`, `restore`), wrap the wait with `opts.WithTimeout`. `list` / `status` do not need it.
+   For async ops (`create`, `trigger`, `restore`), call `opts.AddWaitFlags(cmd)` and wait with `opts.WithTimeout` + `wait.ForPhaseWatch`. `list` / `status` do not need it.
 3. Register the verb on the **group** command:
    - cluster verbs → `c.AddCommand(...)` in `internal/cmd/cluster.go`
    - backup verbs → `c.AddCommand(...)` in `internal/cmd/backup.go`
