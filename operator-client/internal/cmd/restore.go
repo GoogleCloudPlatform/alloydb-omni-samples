@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
@@ -17,8 +20,10 @@ import (
 )
 
 type restoreFlags struct {
-	backup string
-	wait   bool
+	backup      string
+	wait        bool
+	to          string
+	pointInTime string
 }
 
 func newRestoreCommand(opts *GlobalOptions) *cobra.Command {
@@ -26,33 +31,59 @@ func newRestoreCommand(opts *GlobalOptions) *cobra.Command {
 	var waitFlags *WaitFlags
 
 	cmd := &cobra.Command{
-		Use:   "restore [CLUSTER_NAME] --backup BACKUP_NAME",
-		Short: "Restore a cluster in place from a backup",
+		Use:   "restore [CLUSTER_NAME] (--backup BACKUP | --point-in-time TIME --to NEW_CLUSTER)",
+		Short: "Restore a cluster from a backup, in place, or into a new cluster",
 		Long: "Replace all data in a cluster with the data from a backup.\n" +
 			"Anything written after the backup was taken is lost, and the database\n" +
 			"is unavailable while the restore runs, so adbo asks first (skip with -y).\n" +
-			"By default adbo waits until the restore finishes; --no-wait returns at once.",
+			"By default adbo waits until the restore finishes; --no-wait returns at once.\n" +
+			"With --to, adbo creates a new cluster instead and leaves the original untouched.",
 		Example: "  adbo restore my-db --backup my-db-backup-x7k2p\n" +
-			"  adbo restore --backup my-db-backup-x7k2p -y --no-wait",
+			"  adbo restore --backup my-db-backup-x7k2p -y --no-wait\n" +
+			"  adbo restore my-db --backup my-db-backup-x7k2p --to my-db-copy\n" +
+			"  adbo restore my-db --point-in-time 2026-11-16T10:00:00-05:00 --to my-db-copy",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.wait = waitFlags.Enabled()
-			if f.backup == "" {
-				return errors.New("--backup is required; see `adbo backup list` for names")
-			}
 			name, err := opts.ClusterName(args)
 			if err != nil {
 				return err
 			}
+			explicit := len(args) > 0
+			if f.to == "" && opts.Yes && !explicit {
+				return fmt.Errorf("restore with -y needs an explicit CLUSTER_NAME; "+"the selected cluster %q is only used with an interactive confirmation", name)
+			}
+			if f.to == "" && !opts.Yes && !isInteractive(cmd) {
+				return errors.New("restore overwrites data and needs a confirmation, but stdin is not a terminal; pass -y with an explicit CLUSTER_NAME")
+			}
+			if f.pointInTime != "" && f.to == "" {
+				return errors.New("--point-in-time needs --to: a point-in-time restore always creates a new cluster")
+			}
+
 			return runRestore(cmd, opts, name, f)
 		},
 	}
-	cmd.Flags().StringVar(&f.backup, "backup", "", "name of the Backup to restore from")
+	cmd.Flags().StringVar(&f.to, "to", "", "restore into a new cluster with this name instead of overwriting")
+	cmd.Flags().StringVar(&f.backup, "backup", "", "name or ID of the Backup to restore from")
+	cmd.Flags().StringVar(&f.pointInTime, "point-in-time", "", "restore to this time (RFC 3339, e.g. 2026-11-16T10:00:00-05:00); requires --to")
+	cmd.MarkFlagsMutuallyExclusive("backup", "point-in-time")
+	cmd.MarkFlagsOneRequired("backup", "point-in-time")
 	waitFlags = opts.AddWaitFlags(cmd)
 	return cmd
 }
 
-func newRestore(namespace, cluster, backup string) *unstructured.Unstructured {
+func newRestore(namespace, cluster, backup, to, pointInTime string) *unstructured.Unstructured {
+	spec := map[string]any{
+		"sourceDBCluster": cluster,
+	}
+	if to == "" {
+		spec["backup"] = backup
+	} else {
+		spec["pointInTime"] = pointInTime
+		spec["clonedDBClusterConfig"] = map[string]any{
+			"dbclusterName": to,
+		}
+	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": k8s.APIVersion,
 		"kind":       "Restore",
@@ -60,10 +91,7 @@ func newRestore(namespace, cluster, backup string) *unstructured.Unstructured {
 			"generateName": cluster + "-restore-",
 			"namespace":    namespace,
 		},
-		"spec": map[string]any{
-			"sourceDBCluster": cluster,
-			"backup":          backup,
-		},
+		"spec": spec,
 	}}
 }
 
@@ -79,38 +107,73 @@ func runRestore(cmd *cobra.Command, opts *GlobalOptions, cluster string, f resto
 		return c.FormatErr(err)
 	}
 
-	backup, err := c.In(k8s.BackupGVR).Get(ctx, f.backup, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return fmt.Errorf("backup %q not found%s; run `adbo backup list %s` to see backups", f.backup, k8s.Location(c.Namespace, c.Context), cluster)
+	var backupName, taken string
+	if f.pointInTime != "" {
+		taken, err = normalizePointInTime(f.pointInTime)
+		if err != nil {
+			return err
+		}
+	} else {
+		backup, err := c.In(k8s.BackupGVR).Get(ctx, f.backup, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			backup, err = findBackupByID(ctx, c, f.backup)
+			if err != nil {
+				return c.FormatErr(err)
+			}
+			if backup == nil {
+				return fmt.Errorf("backup %q not found%s; run `adbo backup list %s` to see backups", f.backup, k8s.Location(c.Namespace, c.Context), cluster)
+			}
+		}
+		if err != nil {
+			return c.FormatErr(err)
+		}
+		backupName = backup.GetName()
+		if owner := k8s.StringField(backup, "spec", "dbclusterRef"); owner != cluster {
+			return fmt.Errorf("backup %q belongs to cluster %q, not %q", backupName, owner, cluster)
+		}
+
+		if phase := k8s.StringField(backup, "status", "phase"); phase != "Succeeded" {
+			return fmt.Errorf("backup %q is %s, not Succeeded; only finished backups can be restored", backupName, phase)
+		}
+		taken = k8s.StringField(backup, "status", "completeTime")
 	}
-	if err != nil {
-		return c.FormatErr(err)
+	if f.to != "" {
+		_, err := c.In(k8s.DBClusterGVR).Get(ctx, f.to, metav1.GetOptions{})
+		if err == nil {
+			return fmt.Errorf("cluster %q already exists; pick a new name for --to", f.to)
+		}
+		if !apierrors.IsNotFound(err) {
+			return c.FormatErr(err)
+		}
+	}
+	if f.to == "" {
+		prompt := fmt.Sprintf("This will overwrite ALL data in cluster %q%s with backup %q (taken %s).\n"+"Anything written after that time will be lost, and the database will be\n"+"unavailable during the restore. Continue?", cluster, k8s.Location(c.Namespace, c.Context), backupName, taken)
+		ok, err := opts.Confirm(cmd, prompt)
+		if err != nil {
+			return err
+		}
+
+		if !ok {
+			return errDeclined
+		}
 	}
 
-	if owner := k8s.StringField(backup, "spec", "dbclusterRef"); owner != cluster {
-		return fmt.Errorf("backup %q belongs to cluster %q, not %q", f.backup, owner, cluster)
+	if f.to != "" {
+		if err := copyPasswordSecret(ctx, c, cluster, f.to); err != nil {
+			return c.FormatErr(err)
+		}
 	}
-
-	if phase := k8s.StringField(backup, "status", "phase"); phase != "Succeeded" {
-		return fmt.Errorf("backup %q is %s, not Succeeded; only finished backups can be restored", f.backup, phase)
-	}
-	taken := k8s.StringField(backup, "status", "completeTime")
-	prompt := fmt.Sprintf("This will overwrite ALL data in cluster %q%s with backup %q (taken %s).\n"+"Anything written after that time will be lost, and the database will be\n"+"unavailable during the restore. Continue?", cluster, k8s.Location(c.Namespace, c.Context), f.backup, taken)
-	ok, err := opts.Confirm(cmd, prompt)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errDeclined
-	}
-
-	created, err := c.In(k8s.RestoreGVR).Create(ctx, newRestore(c.Namespace, cluster, f.backup), metav1.CreateOptions{})
+	created, err := c.In(k8s.RestoreGVR).Create(ctx, newRestore(c.Namespace, cluster, backupName, f.to, taken), metav1.CreateOptions{})
 	if err != nil {
 		return c.FormatErr(err)
 	}
 	result := created
+	target := cluster
+	if f.to != "" {
+		target = f.to
+	}
 	if f.wait {
-		result, err = waitForRestore(cmd, opts, c, created.GetName())
+		result, err = waitForRestore(cmd, opts, c, created.GetName(), target)
 		if err != nil {
 			return err
 		}
@@ -122,7 +185,15 @@ func runRestore(cmd *cobra.Command, opts *GlobalOptions, cluster string, f resto
 	}
 
 	if f.wait {
-		fmt.Fprintf(out, "Restored cluster %q from backup %q.\n", cluster, f.backup)
+		if f.to != "" {
+			if f.pointInTime != "" {
+				fmt.Fprintf(out, "Created cluster %q from %q as of %s.\n", f.to, cluster, taken)
+			} else {
+				fmt.Fprintf(out, "Created cluster %q from backup %q of %q.\n", f.to, backupName, cluster)
+			}
+		} else {
+			fmt.Fprintf(out, "Restored cluster %q from backup %q.\n", cluster, backupName)
+		}
 		return nil
 	}
 	fmt.Fprintf(out, "Started restore %q of cluster %q. Check progress with `kubectl get restore %s -n %s`.\n",
@@ -146,7 +217,7 @@ func restoreDone(r *unstructured.Unstructured) (bool, error) {
 
 }
 
-func waitForRestore(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, name string) (*unstructured.Unstructured, error) {
+func waitForRestore(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, name, cluster string) (*unstructured.Unstructured, error) {
 	errOut := cmd.ErrOrStderr()
 	fmt.Fprintf(errOut, "Waiting for restore %q to finish...\n", name)
 
@@ -165,6 +236,9 @@ func waitForRestore(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, nam
 	var failed *wait.FailedError
 	switch {
 	case err == nil:
+		if _, err := waitForClusterReady(cmd, opts, c, cluster); err != nil {
+			return nil, err
+		}
 		return last, nil
 	case errors.As(err, &failed):
 		return nil, fmt.Errorf("restore %s failed (phase %s): %s", failed.Name, failed.Phase, failed.Reason)
@@ -174,4 +248,79 @@ func waitForRestore(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, nam
 		return nil, c.FormatErr(err)
 	}
 
+}
+
+func waitForClusterReady(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, cluster string) (*unstructured.Unstructured, error) {
+	errOut := cmd.ErrOrStderr()
+	fmt.Fprintf(errOut, "Waiting for cluster %q to be ready...\n", cluster)
+
+	ctx, cancel := opts.WithTimeout(cmd.Context())
+	defer cancel()
+
+	last, err := wait.ForCondition(ctx, c, k8s.DBClusterGVR, cluster, func(db *unstructured.Unstructured) (bool, error) {
+		return wait.Phase(db) == scaleReadyPhase, nil
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		return nil, fmt.Errorf("cluster %q was not ready within %s (last phase %q): %w", cluster, opts.Timeout, wait.Phase(last), err)
+	}
+	if err != nil {
+		return nil, c.FormatErr(err)
+	}
+	return last, nil
+
+}
+
+func findBackupByID(ctx context.Context, c *k8s.Clients, id string) (*unstructured.Unstructured, error) {
+	list, err := c.In(k8s.BackupGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range list.Items {
+		b := &list.Items[i]
+		if k8s.StringField(b, "status", "physicalBackupStatus", "backupID") == id {
+			return b, nil
+		}
+	}
+	return nil, nil
+}
+
+func copyPasswordSecret(ctx context.Context, c *k8s.Clients, from, to string) error {
+	src, err := c.Typed.CoreV1().Secrets(c.Namespace).Get(ctx, "db-pw-"+from, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	password, ok := src.Data[from]
+	if !ok {
+		return fmt.Errorf("secret db-pw-%s has no key %q", from, from)
+	}
+	dst := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-pw-" + to,
+			Namespace: c.Namespace,
+		},
+		Data: map[string][]byte{
+			to: password,
+		},
+	}
+	_, err = c.Typed.CoreV1().Secrets(c.Namespace).Create(ctx, dst, metav1.CreateOptions{})
+	return err
+}
+
+func normalizePointInTime(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, `"'`)
+	s = strings.Replace(s, " ", "T", 1)
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return "", fmt.Errorf("--point-in-time %q is not a valid time; use RFC 3339 with a timezone, e.g. 2026-11-16T10:00:00-05:00 or 2026-11-16T15:00:00Z", s)
+	}
+	return t.UTC().Format(time.RFC3339), nil
+}
+
+func isInteractive(cmd *cobra.Command) bool {
+	f, ok := cmd.InOrStdin().(*os.File)
+	if !ok {
+		return true
+	}
+	return term.IsTerminal(int(f.Fd()))
 }
