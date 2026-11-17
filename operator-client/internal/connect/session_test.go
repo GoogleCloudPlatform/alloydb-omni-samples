@@ -41,29 +41,40 @@ func (r *recordingRunner) Run(ctx context.Context, name string, args []string, e
 	return nil
 }
 
-type stubExec struct {
+type execCall struct {
 	command []string
 	env     []string
-	err     error
+	stdin   string
+	tty     bool
+}
+
+type stubExec struct {
+	calls []execCall
+	err   error
 }
 
 func (s *stubExec) Exec(ctx context.Context, namespace, pod, container string, command, env []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
-	s.command = command
-	s.env = env
+	var body []byte
+	if stdin != nil {
+		body, _ = io.ReadAll(stdin)
+	}
+	s.calls = append(s.calls, execCall{command: command, env: env, stdin: string(body), tty: tty})
 	return s.err
 }
 
 func TestSessionExecDoesNotLeakPassword(t *testing.T) {
+	const password = "s3cret;rm -rf /"
 	ex := &stubExec{}
 	fwd := &fakeForward{}
 	var progress bytes.Buffer
 	err := Session{
-		Namespace: "ns",
-		Pod:       "db-0",
-		Container: "database",
-		User:      "postgres",
-		Database:  "postgres",
-		Password:  "s3cret-password",
+		Namespace:  "ns",
+		Pod:        "db-0",
+		Container:  "database",
+		RemotePort: 5433,
+		User:       "foo;rm",
+		Database:   "bar$(id)",
+		Password:   password,
 	}.Exec(context.Background(), ex, &progress, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
@@ -71,11 +82,31 @@ func TestSessionExecDoesNotLeakPassword(t *testing.T) {
 	if fwd.called {
 		t.Fatal("exec path forwarded a port")
 	}
-	if strings.Contains(strings.Join(ex.command, " "), "s3cret-password") {
-		t.Fatalf("password in command: %v", ex.command)
+	if len(ex.calls) != 2 {
+		t.Fatalf("calls %d", len(ex.calls))
 	}
-	if !strings.Contains(strings.Join(ex.env, "\n"), "PGPASSWORD=s3cret-password") {
-		t.Fatalf("env %v", ex.env)
+	stash, psql := ex.calls[0], ex.calls[1]
+	if stash.tty || !strings.Contains(strings.Join(stash.command, " "), "umask 077") {
+		t.Fatalf("stash %#v", stash)
+	}
+	if stash.stdin != password+"\n" {
+		t.Fatalf("stdin %q", stash.stdin)
+	}
+	for _, call := range ex.calls {
+		joined := strings.Join(append(append([]string{}, call.command...), call.env...), " ")
+		if strings.Contains(joined, password) {
+			t.Fatalf("password in exec: %v", call)
+		}
+	}
+	joined := strings.Join(psql.command, "\n")
+	for _, want := range []string{"PGSSLMODE=require", "PSQL_HISTORY=/dev/null", "-h", "127.0.0.1", "-p", "5433", "foo;rm", "bar$(id)"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("psql command missing %s:\n%s", want, joined)
+		}
+	}
+	script := psql.command[5]
+	if strings.Contains(script, "foo;rm") || strings.Contains(script, "bar$(id)") || strings.Contains(script, password) {
+		t.Fatalf("values were interpolated into the script: %s", script)
 	}
 	if !strings.Contains(progress.String(), "exec: db-0/database") {
 		t.Fatalf("progress %s", progress.String())

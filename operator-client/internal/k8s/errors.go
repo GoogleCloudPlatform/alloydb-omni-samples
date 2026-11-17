@@ -3,9 +3,15 @@ package k8s
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+)
+
+var (
+	cannotResource = regexp.MustCompile(`cannot ([a-z]+) resource "([^"]+)"`)
+	inNamespace    = regexp.MustCompile(`in the namespace "([^"]+)"`)
 )
 
 // formattedError marks a StatusError that Format already translated.
@@ -62,6 +68,53 @@ func Format(err error, ns, kubeContext string) error {
 	default:
 		return err
 	}
+}
+
+// Brief is the one-line form of an API error for a table cell.
+// A 403 becomes "forbidden: <verb> <resource> (<scope>)" and never includes
+// the raw user identity. verb, resource, and namespace fill in what the
+// Status does not already say.
+func Brief(err error, verb, resource, namespace string) string {
+	if err == nil {
+		return ""
+	}
+	if apierrors.IsForbidden(err) {
+		return forbiddenBrief(err, verb, resource, namespace)
+	}
+	msg := Format(err, namespace, "").Error()
+	if i := strings.IndexAny(msg, "\r\n"); i >= 0 {
+		msg = msg[:i]
+	}
+	return msg
+}
+
+func forbiddenBrief(err error, verb, resource, namespace string) string {
+	msg := err.Error()
+	if m := cannotResource.FindStringSubmatch(msg); len(m) == 3 {
+		verb, resource = m[1], m[2]
+	} else if status, ok := err.(apierrors.APIStatus); ok {
+		if d := status.Status().Details; d != nil && d.Kind != "" {
+			resource = d.Kind
+		}
+	}
+	scope := "cluster scope"
+	switch {
+	case strings.Contains(msg, "at the cluster scope"):
+		scope = "cluster scope"
+	default:
+		if m := inNamespace.FindStringSubmatch(msg); len(m) == 2 {
+			scope = `namespace "` + m[1] + `"`
+		} else if namespace != "" {
+			scope = `namespace "` + namespace + `"`
+		}
+	}
+	if verb == "" {
+		verb = "get"
+	}
+	if resource == "" {
+		resource = "resource"
+	}
+	return fmt.Sprintf("forbidden: %s %s (%s)", verb, resource, scope)
 }
 
 // FormatErr is Format using the client's namespace and context.

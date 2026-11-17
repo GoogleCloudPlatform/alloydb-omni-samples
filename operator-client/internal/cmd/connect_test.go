@@ -30,14 +30,23 @@ func (s *stubForward) Forward(ctx context.Context, namespace, pod string, local,
 	return 54321, func() {}, nil
 }
 
-type stubExec struct {
+type execCall struct {
 	command []string
 	env     []string
+	stdin   string
+	tty     bool
+}
+
+type stubExec struct {
+	calls []execCall
 }
 
 func (s *stubExec) Exec(ctx context.Context, namespace, pod, container string, command, env []string, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
-	s.command = command
-	s.env = env
+	var body []byte
+	if stdin != nil {
+		body, _ = io.ReadAll(stdin)
+	}
+	s.calls = append(s.calls, execCall{command: command, env: env, stdin: string(body), tty: tty})
 	return nil
 }
 
@@ -179,15 +188,24 @@ func TestRunConnectExecSkipsForward(t *testing.T) {
 	if fwd.pod != "" {
 		t.Fatalf("forwarded to %s", fwd.pod)
 	}
-	if strings.Contains(strings.Join(ex.command, " "), "s3cret-password") {
-		t.Fatalf("password leaked into command: %v", ex.command)
+	if len(ex.calls) != 2 {
+		t.Fatalf("calls %d", len(ex.calls))
 	}
-	if !strings.Contains(strings.Join(ex.env, "\n"), "PGPASSWORD=s3cret-password") {
-		t.Fatalf("env %v", ex.env)
+	const password = "s3cret-password"
+	if ex.calls[0].tty || ex.calls[0].stdin != password+"\n" {
+		t.Fatalf("stash %#v", ex.calls[0])
 	}
-	joined := strings.Join(ex.command, " ")
-	if !strings.Contains(joined, "psql") || !strings.Contains(joined, "postgres") {
-		t.Fatalf("command %v", ex.command)
+	for _, call := range ex.calls {
+		joined := strings.Join(append(append([]string{}, call.command...), call.env...), " ")
+		if strings.Contains(joined, password) {
+			t.Fatalf("password leaked into exec: %v", call)
+		}
+	}
+	joined := strings.Join(ex.calls[1].command, " ")
+	for _, want := range []string{"psql", "-h", "127.0.0.1", "-p", "5432", "PGSSLMODE=require", "postgres"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("command missing %s: %v", want, ex.calls[1].command)
+		}
 	}
 	if !strings.Contains(stderr.String(), "exec: my-db-0/database") {
 		t.Fatalf("stderr %s", stderr.String())

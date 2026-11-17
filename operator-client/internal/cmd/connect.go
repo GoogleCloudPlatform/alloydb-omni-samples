@@ -57,7 +57,7 @@ A local psql is required unless --exec is set.`,
 			if execInPod && (cmd.Flags().Changed("local-port") || cmd.Flags().Changed("port")) {
 				return fmt.Errorf("--exec cannot be combined with --local-port")
 			}
-			name, err := opts.ClusterName(args)
+			name, _, err := prepareCluster(opts, args)
 			if err != nil {
 				return err
 			}
@@ -154,12 +154,13 @@ func runConnect(cmd *cobra.Command, opts *GlobalOptions, in connectOpts, deps co
 			ex = connect.KubeExec{REST: c.REST, Typed: c.Typed}
 		}
 		return connect.Session{
-			Namespace: ns,
-			Pod:       pod,
-			Container: cluster.ContainerDatabase,
-			User:      in.user,
-			Database:  in.dbname,
-			Password:  string(password),
+			Namespace:  ns,
+			Pod:        pod,
+			Container:  cluster.ContainerDatabase,
+			RemotePort: cluster.DBPort(obj),
+			User:       in.user,
+			Database:   in.dbname,
+			Password:   string(password),
 		}.Exec(ctx, ex, cmd.ErrOrStderr(), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 	}
 

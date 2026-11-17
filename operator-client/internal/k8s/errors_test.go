@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -18,6 +19,30 @@ func TestFormatNotFoundIncludesWhere(t *testing.T) {
 	}
 	if !apierrors.IsNotFound(err) {
 		t.Fatal("should still unwrap as NotFound")
+	}
+}
+
+func TestBriefForbiddenDropsUserIdentity(t *testing.T) {
+	err := &apierrors.StatusError{ErrStatus: metav1.Status{
+		Status: metav1.StatusFailure,
+		Code:   http.StatusForbidden,
+		Reason: metav1.StatusReasonForbidden,
+		Message: `customresourcedefinitions.apiextensions.k8s.io "certificates.cert-manager.io" is forbidden: ` +
+			`User "system:serviceaccount:default:default" cannot get resource "customresourcedefinitions" ` +
+			`in API group "apiextensions.k8s.io" at the cluster scope`,
+	}}
+	got := Brief(err, "get", "customresourcedefinitions", "")
+	want := "forbidden: get customresourcedefinitions (cluster scope)"
+	if got != want {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestBriefForbiddenUsesHint(t *testing.T) {
+	err := apierrors.NewForbidden(schema.GroupResource{Resource: "storageclasses"}, "", errors.New("no"))
+	got := Brief(err, "list", "storageclasses", "")
+	if got != "forbidden: list storageclasses (cluster scope)" {
+		t.Fatalf("got %q", got)
 	}
 }
 
@@ -66,10 +91,10 @@ func TestFormatErrUsesClientLocation(t *testing.T) {
 }
 
 func TestFormatCRDsMissing(t *testing.T) {
-	se := apierrors.NewGenericServerResponse(http.StatusNotFound, "get", 
-			schema.GroupResource{Group: "alloydbomni.dbadmin.goog", Resource: "dbcluster"},
-			"", "404 not found", 0, true)
-	
+	se := apierrors.NewGenericServerResponse(http.StatusNotFound, "get",
+		schema.GroupResource{Group: "alloydbomni.dbadmin.goog", Resource: "dbcluster"},
+		"", "404 not found", 0, true)
+
 	err := Format(se, "ns", "ctx")
 	if err == nil || !strings.Contains(err.Error(), "CRDs") {
 		t.Fatalf("got %v", err)

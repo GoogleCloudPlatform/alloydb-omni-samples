@@ -15,7 +15,7 @@ import (
 
 // KubeExec runs a command in a pod over SPDY.
 // The exec API has no env field, so env is prefixed as `env KEY=VAL command`.
-// Callers keep the password in env, not in command.
+// The API server records that command line. Do not put a password in env or command.
 type KubeExec struct {
 	REST  *rest.Config
 	Typed kubernetes.Interface
@@ -63,12 +63,18 @@ func (k KubeExec) Exec(ctx context.Context, namespace, pod, container string, co
 	if streamErr {
 		errOut = stderr
 	}
-	if err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdin:  stdin,
-		Stdout: stdout,
-		Stderr: errOut,
-		Tty:    tty,
-	}); err != nil {
+	// A remote TTY expects raw keystrokes. Without raw mode, Enter stays a
+	// carriage return and shows up as ^M instead of submitting the line.
+	err = withTerminal(stdin, tty, func(resize remotecommand.TerminalSizeQueue) error {
+		return executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+			Stdin:             stdin,
+			Stdout:            stdout,
+			Stderr:            errOut,
+			Tty:               tty,
+			TerminalSizeQueue: resize,
+		})
+	})
+	if err != nil {
 		return fmt.Errorf("psql exited: %w", err)
 	}
 	return nil
