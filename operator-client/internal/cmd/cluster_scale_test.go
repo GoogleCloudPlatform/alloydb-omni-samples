@@ -193,6 +193,21 @@ func TestClusterScaleWarnsOfOutageWithoutStandbys(t *testing.T) {
 	}
 }
 
+func TestClusterScaleWarnsOfOutageWhenRemovingTheStandbys(t *testing.T) {
+	db := sizedCluster("my-db")
+	_ = unstructured.SetNestedField(db.Object, int64(1), "spec", "availability", "numberOfStandbys")
+	opts := fakeOpts(output.OutputTable, db)
+	var out, errOut bytes.Buffer
+	// The patch drops the standby in the same step as the restart.
+	f := scaleFlags{memory: "32Gi", standbys: 0, standbysSet: true}
+	if err := runClusterScale(scaleCmd(&out, &errOut, "y\n"), opts, "my-db", f); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), "removes the standbys, so the cluster is unavailable until the restart finishes") {
+		t.Errorf("want an outage warning when --standbys 0 comes with a restart:\n%s", errOut.String())
+	}
+}
+
 func TestClusterScaleNoOutageWarningWithStandbysOrWithoutRestart(t *testing.T) {
 	withStandby := sizedCluster("my-db")
 	_ = unstructured.SetNestedField(withStandby.Object, int64(1), "spec", "availability", "numberOfStandbys")

@@ -133,8 +133,12 @@ func runClusterScale(cmd *cobra.Command, opts *GlobalOptions, name string, f sca
 	prompt := "Apply these changes?"
 	if restartsDatabase(changes) {
 		prompt = "Changing CPU or memory restarts the database. Apply?"
-		if !hasStandbys(db) {
+		switch {
+		case !hasStandbys(db):
 			fmt.Fprintln(cmd.ErrOrStderr(), "This cluster has no standbys, so it is unavailable until the restart finishes.")
+		case f.standbysSet && f.standbys == 0:
+			// The same patch drops the standbys, so none is left to cover the restart.
+			fmt.Fprintln(cmd.ErrOrStderr(), "This change also removes the standbys, so the cluster is unavailable until the restart finishes.")
 		}
 	}
 	ok, err := opts.Confirm(cmd, prompt)
