@@ -426,3 +426,149 @@ func TestReplicateStatusJSON(t *testing.T) {
 		t.Errorf("want only the existing upstream, got %d objects", len(got))
 	}
 }
+
+// linkedSides returns a source with a published upstream and a target with a
+// healthy downstream, as after a successful create.
+func linkedSides(t *testing.T) (fakeSide, fakeSide) {
+	t.Helper()
+	src := newFakeSide("us", "prod", nil)
+	dst := newFakeSide("eu", "dr", nil)
+	up := newUpstream("prod", "my-db", "my-copy")
+	publishUpstream(up)
+	seedReplication(t, src, up)
+	down := newDownstream("dr", "my-copy", "my-copy-replication-pw", up)
+	down.SetGeneration(1)
+	setConditions(down, "Ready", "True", "Healthy", "True")
+	_ = unstructured.SetNestedField(down.Object, int64(1), "status", "observedGeneration")
+	seedReplication(t, dst, down)
+	return src, dst
+}
+
+func TestPromoteDone(t *testing.T) {
+	down := newDownstream("dr", "my-copy", "pw", newUpstream("prod", "my-db", "my-copy"))
+	setConditions(down, "Ready", "True")
+	for _, tc := range []struct {
+		og   int64
+		done bool
+	}{{1, false}, {2, true}, {3, true}} {
+		_ = unstructured.SetNestedField(down.Object, tc.og, "status", "observedGeneration")
+		if done, _ := promoteDone(2)(down); done != tc.done {
+			t.Errorf("observedGeneration %d: done=%v, want %v", tc.og, done, tc.done)
+		}
+	}
+	setConditions(down, "Ready", "False")
+	if done, _ := promoteDone(2)(down); done {
+		t.Error("caught up but not Ready must not be done")
+	}
+}
+
+func TestReplicatePromoteKeepsUpstreamAndWarns(t *testing.T) {
+	src, dst := linkedSides(t)
+	opts := replicateOpts(t, src, dst)
+	f := usToEU // --no-wait
+	var out, errOut bytes.Buffer
+	if err := runReplicatePromote(scaleCmd(&out, &errOut, "y\n"), opts, "my-copy", f); err != nil {
+		t.Fatalf("%v\nstderr:\n%s", err, errOut.String())
+	}
+	for _, want := range []string{"stops copying", "10.0.0.5", "has not arrived yet", "Continue?", "Warning", "adbo replicate delete my-copy"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("stderr missing %q:\n%s", want, errOut.String())
+		}
+	}
+	if got := k8s.StringField(getReplication(t, dst, "dr", "my-copy-downstream"), "spec", "downstream", "control"); got != "promote" {
+		t.Errorf("control = %q, want promote", got)
+	}
+	// Other downstream fields must survive the patch.
+	if got := k8s.StringField(getReplication(t, dst, "dr", "my-copy-downstream"), "spec", "downstream", "host"); got != "10.0.0.5" {
+		t.Errorf("host = %q after promote", got)
+	}
+	getReplication(t, src, "prod", "my-copy-upstream") // still there without --cleanup-upstream
+	if !strings.Contains(out.String(), `Promoting "my-copy"`) {
+		t.Errorf("out = %q", out.String())
+	}
+}
+
+func TestReplicatePromoteCleanupUpstream(t *testing.T) {
+	src, dst := linkedSides(t)
+	opts := replicateOpts(t, src, dst)
+	opts.Yes = true
+	f := usToEU
+	f.cleanUpstream = true
+	var out, errOut bytes.Buffer
+	if err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "my-copy", f); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.dyn.Resource(k8s.ReplicationGVR).Namespace("prod").Get(t.Context(), "my-copy-upstream", metav1.GetOptions{}); err == nil {
+		t.Error("--cleanup-upstream left the upstream on the source")
+	}
+	if strings.Contains(errOut.String(), "Warning") {
+		t.Errorf("no warning expected after cleanup:\n%s", errOut.String())
+	}
+}
+
+func TestReplicatePromoteWaits(t *testing.T) {
+	src, dst := linkedSides(t)
+	opts := replicateOpts(t, src, dst)
+	opts.Yes = true
+	// The fake does not bump generation on patch, so play both API server and operator.
+	playOperator(t, dst, "dr", "my-copy-downstream", func(d *unstructured.Unstructured) {
+		for k8s.StringField(d, "spec", "downstream", "control") != "promote" {
+			time.Sleep(10 * time.Millisecond)
+			got, err := dst.dyn.Resource(k8s.ReplicationGVR).Namespace("dr").Get(context.Background(), "my-copy-downstream", metav1.GetOptions{})
+			if err != nil {
+				return
+			}
+			*d = *got
+		}
+		_ = unstructured.SetNestedField(d.Object, int64(2), "status", "observedGeneration")
+	})
+	f := usToEU
+	f.wait = true
+	var out, errOut bytes.Buffer
+	if err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "my-copy", f); err != nil {
+		t.Fatalf("%v\nstderr:\n%s", err, errOut.String())
+	}
+	if !strings.Contains(out.String(), `Promoted "my-copy"`) {
+		t.Errorf("out = %q", out.String())
+	}
+}
+
+func TestReplicatePromoteDeclined(t *testing.T) {
+	src, dst := linkedSides(t)
+	opts := replicateOpts(t, src, dst)
+	var out, errOut bytes.Buffer
+	err := runReplicatePromote(scaleCmd(&out, &errOut, "n\n"), opts, "my-copy", usToEU)
+	if !errors.Is(err, errDeclined) {
+		t.Fatalf("want errDeclined, got %v", err)
+	}
+	if got := k8s.StringField(getReplication(t, dst, "dr", "my-copy-downstream"), "spec", "downstream", "control"); got != "setup" {
+		t.Errorf("control = %q after declining, want setup", got)
+	}
+}
+
+func TestReplicatePromoteAlreadyPromoted(t *testing.T) {
+	src, dst := linkedSides(t)
+	opts := replicateOpts(t, src, dst)
+	down := getReplication(t, dst, "dr", "my-copy-downstream")
+	_ = unstructured.SetNestedField(down.Object, "promote", "spec", "downstream", "control")
+	if _, err := dst.dyn.Resource(k8s.ReplicationGVR).Namespace("dr").Update(t.Context(), down, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	// Empty stdin: it must not even ask.
+	if err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "my-copy", usToEU); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "already promoted") {
+		t.Errorf("out = %q", out.String())
+	}
+}
+
+func TestReplicatePromoteNoReplication(t *testing.T) {
+	opts := replicateOpts(t, newFakeSide("us", "prod", nil), newFakeSide("eu", "dr", nil))
+	var out, errOut bytes.Buffer
+	err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "nope", usToEU)
+	if err == nil || !strings.Contains(err.Error(), "nope-downstream does not exist") {
+		t.Fatalf("err = %v", err)
+	}
+}

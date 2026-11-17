@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
@@ -12,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
@@ -207,6 +209,7 @@ func newReplicateCommand(opts *GlobalOptions) *cobra.Command {
 		"target-namespace", "", "namespace of the target (default: -n)")
 	c.AddCommand(newReplicateCreateCommand(opts, &f))
 	c.AddCommand(newReplicateStatusCommand(opts, &f))
+	c.AddCommand(newReplicatePromoteCommand(opts, &f))
 	return c
 }
 func newReplicateCreateCommand(opts *GlobalOptions, f *replicateFlags) *cobra.Command {
@@ -303,4 +306,107 @@ func newReplicateStatusCommand(opts *GlobalOptions, f *replicateFlags) *cobra.Co
 			return runReplicateStatus(cmd, opts, args[0], *f)
 		},
 	}
+}
+
+func runReplicatePromote(cmd *cobra.Command, opts *GlobalOptions, target string, f replicateFlags) error {
+	ctx := cmd.Context()
+	dst, err := newSideClients(opts, f.targetContext, f.targetNamespace)
+	if err != nil {
+		return err
+	}
+	downName := target + "-downstream"
+	down, err := findReplication(ctx, dst, downName)
+	if err != nil {
+		return err
+	}
+	if down == nil {
+		return fmt.Errorf("no replication into %q found: %s does not exist%s", target, downName, k8s.Location(dst.Namespace, dst.Context))
+	}
+	out := cmd.OutOrStdout()
+	if k8s.StringField(down, "spec", "downstream", "control") == "promote" {
+		fmt.Fprintf(out, "Cluster %q is already promoted, nothing to do.\n", target)
+		return nil
+	}
+	prompt := fmt.Sprintf("Promote %q%s: it stops copying from the source (%s) and becomes a normal, writeable cluster.\n"+"Anything written to the source that has not arrived yet will not be copied. Continue?", target, k8s.Location(dst.Namespace, dst.Context), k8s.StringField(down, "spec", "downstream", "host"))
+	ok, err := opts.Confirm(cmd, prompt)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errDeclined
+	}
+	patch := map[string]any{
+		"metadata": map[string]any{"resourceVersion": down.GetResourceVersion()},
+		"spec":     map[string]any{"downstream": map[string]any{"control": "promote"}},
+	}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+	promoted, err := dst.In(k8s.ReplicationGVR).Patch(ctx, downName, types.MergePatchType, body, metav1.PatchOptions{})
+	if err != nil {
+		return dst.FormatErr(err)
+	}
+	if f.wait {
+		waitCtx, cancel := opts.WithTimeout(ctx)
+		defer cancel()
+		fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for %q to finish promoting...\n", target)
+		if _, err := wait.ForCondition(waitCtx, dst, k8s.ReplicationGVR, downName, promoteDone(promoted.GetGeneration())); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("promote of %q is applied but not finished after %s; check `adbo replicate status %s`: %w", target, opts.Timeout, target, err)
+			}
+			return dst.FormatErr(err)
+		}
+	}
+	if f.cleanUpstream {
+		src, err := newSideClients(opts, f.sourceContext, f.sourceNamespace)
+		if err != nil {
+			return err
+		}
+		err = src.In(k8s.ReplicationGVR).Delete(ctx, target+"-upstream", metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("promoted %q, but could not remove the source side: %w", target, src.FormatErr(err))
+		}
+	} else {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: the source still keeps changes for %q, which can fill its disk.\n"+
+			"Run `adbo replicate delete %s` (or promote with --cleanup-upstream) once you no longer need it.\n", target, target)
+	}
+	if isStructured(opts) {
+		return output.Print(out, opts.Output, output.Table{}, promoted.Object)
+	}
+	verb := "Promoting"
+	if f.wait {
+		verb = "Promoted"
+	}
+	fmt.Fprintf(out, "%s %q%s; it is now a separate, writeable cluster.\n", verb, target, k8s.Location(dst.Namespace, dst.Context))
+	return nil
+
+}
+
+func promoteDone(generation int64) wait.Condition {
+	return func(down *unstructured.Unstructured) (bool, error) {
+		og, _, _ := unstructured.NestedInt64(down.Object, "status", "observedGeneration")
+		return og >= generation && k8s.ConditionStatus(down, "Ready") == "True", nil
+	}
+}
+
+func newReplicatePromoteCommand(opts *GlobalOptions, f *replicateFlags) *cobra.Command {
+	var waitFlags *WaitFlags
+	cmd := &cobra.Command{
+		Use:   "promote TARGET",
+		Short: "Stop copying into TARGET and make it a normal, writeable cluster",
+		Long: "Cut TARGET loose from its source. adbo asks first (-y skips). Afterwards the\n" + "source still keeps changes for TARGET until its side is removed, which can\n" +
+			"fill its disk: pass --cleanup-upstream, or run `adbo replicate delete` later.",
+		Example: "  adbo replicate promote my-db-copy\n" +
+			"  adbo replicate promote my-db-dr cleanup-upstream --source-context us --target-context eu",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f.wait = waitFlags.Enabled()
+			return runReplicatePromote(cmd, opts, args[0], *f)
+		},
+	}
+	cmd.Flags().BoolVar(&f.cleanUpstream, "cleanup-upstream", false, "also remove the source side so it stops keeping changes for TARGET")
+	waitFlags = opts.AddWaitFlags(cmd)
+	return cmd
+
 }
