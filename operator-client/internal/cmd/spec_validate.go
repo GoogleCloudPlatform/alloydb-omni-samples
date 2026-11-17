@@ -8,7 +8,10 @@ import (
 )
 
 func validateSpec(old, updated *unstructured.Unstructured) error {
-	if old == nil {
+	if updated == nil || updated.Object == nil {
+		return fmt.Errorf("no updated DBCluster spec to validate")
+	}
+	if old == nil || old.Object == nil {
 		old = &unstructured.Unstructured{Object: map[string]any{}}
 	}
 	if v, found, _ := unstructured.NestedFieldNoCopy(updated.Object, standbysPath...); found {

@@ -102,3 +102,9 @@ func TestValidateSpecWithoutOld(t *testing.T) {
 		t.Fatalf("err = %v, want the unitless memory error", err)
 	}
 }
+
+func TestValidateSpecNilUpdated(t *testing.T) {
+	if err := validateSpec(sizedCluster("my-db"), nil); err == nil {
+		t.Fatal("nil updated must be an error, not a panic")
+	}
+}
