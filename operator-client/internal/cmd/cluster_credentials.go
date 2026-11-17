@@ -38,7 +38,7 @@ func newClusterCredentialsCommand(opts *GlobalOptions) *cobra.Command {
 		Example: "  adbo cluster credentials my-db\n  adbo cluster credentials my-db --reveal-password\n  adbo cluster connection-info my-db -o json",
 		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, err := opts.ClusterName(args)
+			name, _, err := prepareCluster(opts, args)
 			if err != nil {
 				return err
 			}
