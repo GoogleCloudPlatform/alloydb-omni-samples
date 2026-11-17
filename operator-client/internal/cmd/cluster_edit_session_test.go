@@ -232,3 +232,23 @@ func TestEditSessionRebaseReappliesChangesOnFreshObject(t *testing.T) {
 		t.Errorf("want only my change left, got %+v", s.changes())
 	}
 }
+
+func TestEditSessionAddsParametersWhenTheClusterHasNone(t *testing.T) {
+	live := readyDBCluster()
+	unstructured.RemoveNestedField(live.Object, "spec", "primarySpec", "parameters")
+	s := newEditSession(live)
+	if err := s.add("primarySpec.parameters.max_connections", "200"); err != nil {
+		t.Fatal(err)
+	}
+	if v := specValue(t, s, "primarySpec", "parameters", "max_connections"); v != "200" {
+		t.Errorf("max_connections = %#v, want the string \"200\" (the CRD only takes strings)", v)
+	}
+	// Dotted names are one parameter, not nested maps.
+	if err := s.add("primarySpec.parameters.pgaudit.log", "all"); err != nil {
+		t.Fatal(err)
+	}
+	params, _, _ := unstructured.NestedMap(s.object().Object, "spec", "primarySpec", "parameters")
+	if params["pgaudit.log"] != "all" {
+		t.Errorf("parameters = %v, want a \"pgaudit.log\" key", params)
+	}
+}

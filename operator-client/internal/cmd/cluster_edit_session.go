@@ -142,15 +142,28 @@ func (s *editSession) add(name, raw string) error {
 	if err != nil {
 		return err
 	}
+	strs := false
+	for _, sm := range stringMaps {
+		if len(segs) > len(sm) && hasKeys(segs, sm) {
+			segs = append(append([]string{}, segs[:len(sm)]...), strings.Join(segs[len(sm):], "."))
+			strs = true
+		}
+	}
 	m := s.spec
 	var p fieldPath
 	for i, seg := range segs {
 		child, exists := m[seg]
 		if !exists {
 			var like any // nil: guess the type from raw
-			if stringMap(m) {
+			switch {
+			case strs:
+				for _, rest := range segs[i:] {
+					p = append(p, rest)
+				}
+				like = ""
+			case stringMap(m):
 				p, like = append(p, strings.Join(segs[i:], ".")), ""
-			} else {
+			default:
 				for _, rest := range segs[i:] {
 					p = append(p, rest)
 				}
@@ -334,6 +347,21 @@ func parseFieldName(name string) ([]string, error) {
 		return nil, errNeedFieldName
 	}
 	return segs, nil
+}
+
+// stringMaps are the spec maps that the DBCluster CRD says hold only
+// strings. Their keys can contain dots (pgaudit.log), and values added to
+// them stay strings even when the map doesn't exist on the cluster yet.
+var stringMaps = []fieldPath{{"primarySpec", "parameters"}}
+
+// hasKeys reports whether segs starts with the keys in prefix.
+func hasKeys(segs []string, prefix fieldPath) bool {
+	for i, k := range prefix {
+		if segs[i] != k {
+			return false
+		}
+	}
+	return true
 }
 
 // stringMap reports whether m holds only strings, like primarySpec.parameters.
