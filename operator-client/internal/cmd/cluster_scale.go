@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"strconv"
-	"strings"
-
 	"github.com/spf13/cobra"
+	"io"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"strconv"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
@@ -32,16 +31,9 @@ var (
 	readReplicaPath = []string{"spec", "availability", "enableStandbyAsReadReplica"}
 )
 
-// maxStandbys is the DBCluster CRD's maximum for numberOfStandbys.
-const maxStandbys = 5
-
 // scaleMinMemory catches unit mistakes (e.g. --memory 16 meaning 16 bytes); it
 // is not a sizing guide. Matches `cluster edit`.
 var scaleMinMemory = resource.MustParse("1Gi")
-
-// errDeclined is returned when the user answers no (or stdin is closed
-// without -y), so scripts do not mistake an aborted scale for success.
-var errDeclined = errors.New("cancelled; nothing changed")
 
 // scaleFlags are the requested changes; empty string / -1 means "leave as is".
 type scaleFlags struct {
@@ -223,6 +215,9 @@ func scaleDone(generation int64, patch map[string]any) wait.Condition {
 		if phase != scaleReadyPhase {
 			return false, nil
 		}
+		if k8s.ConditionStatus(db, "LDTMScalingInProgress") == "True" {
+			return false, nil
+		}
 		if !allocatedMatches(db, patch) {
 			return false, nil
 		}
@@ -283,6 +278,7 @@ func diskSize(obj map[string]any, base []string) string {
 // the prompt the API server rejects it with a Conflict instead of letting
 // the patch overwrite that edit.
 func planScale(db *unstructured.Unstructured, f scaleFlags) ([]change, map[string]any, error) {
+	const maxStandbys = 5
 	var changes []change
 	patch := map[string]any{"metadata": map[string]any{"resourceVersion": db.GetResourceVersion()}}
 
@@ -355,7 +351,7 @@ func planScale(db *unstructured.Unstructured, f scaleFlags) ([]change, map[strin
 			changes = append(changes, change{"standbys", strconv.FormatInt(cur, 10), strconv.Itoa(f.standbys)})
 		}
 	}
-	if len(changes) > 0 && hasReadyStandby(db) {
+	if restartsDatabase(changes) && hasReadyStandby(db) && (!f.standbysSet || f.standbys >= 1) && db.GetAnnotations()[ldtmAnnotation] != "false" {
 		if err := unstructured.SetNestedField(patch, "true", "metadata", "annotations", ldtmAnnotation); err != nil {
 			return nil, nil, err
 		}

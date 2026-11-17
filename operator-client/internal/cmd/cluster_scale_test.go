@@ -274,6 +274,30 @@ func TestPlanScaleUsesLowDowntimeOnlyWithReadyStandby(t *testing.T) {
 	if v := ldtm(withStandby, scaleFlags{cpu: "2", standbys: -1}); v != "" {
 		t.Errorf("no-op scale: annotation = %q, want none", v)
 	}
+
+	// LDTM is only for restarts, so a disk or standby-only change skips it.
+	if v := ldtm(withStandby, scaleFlags{disk: "50Gi", standbys: -1}); v != "" {
+		t.Errorf("disk-only scale: annotation = %q, want none", v)
+	}
+	if v := ldtm(withStandby, scaleFlags{standbys: 2, standbysSet: true}); v != "" {
+		t.Errorf("standbys-only scale: annotation = %q, want none", v)
+	}
+
+	// Removing every standby in the same patch leaves nothing to switch to.
+	if v := ldtm(withStandby, scaleFlags{cpu: "4", standbys: 0, standbysSet: true}); v != "" {
+		t.Errorf("--standbys 0: annotation = %q, want none", v)
+	}
+	// Keeping at least one standby still gets it.
+	if v := ldtm(withStandby, scaleFlags{cpu: "4", standbys: 2, standbysSet: true}); v != "true" {
+		t.Errorf("--cpu with --standbys 2: annotation = %q, want true", v)
+	}
+
+	// A user who turned LDTM off keeps it off.
+	optedOut := withStandby.DeepCopy()
+	optedOut.SetAnnotations(map[string]string{ldtmAnnotation: "false"})
+	if v := ldtm(optedOut, cpu4); v != "" {
+		t.Errorf("explicit false: patch sets annotation %q, want it left alone", v)
+	}
 }
 
 func TestClusterScaleSendsLowDowntimeAnnotation(t *testing.T) {
@@ -356,6 +380,20 @@ func TestScaleDone(t *testing.T) {
 		}, false, false},
 		{"resources not yet allocated", func(db *unstructured.Unstructured) { readyStatus(db, 2, stale) }, false, false},
 		{"operator omits allocatedResources", func(db *unstructured.Unstructured) { readyStatus(db, 2, nil) }, true, false},
+		{"low-downtime scale still updating the old primary", func(db *unstructured.Unstructured) {
+			readyStatus(db, 2, applied)
+			_ = unstructured.SetNestedSlice(db.Object, []any{
+				map[string]any{"type": "HAReady", "status": "True"},
+				map[string]any{"type": "LDTMScalingInProgress", "status": "True"},
+			}, "status", "conditions")
+		}, false, false},
+		{"low-downtime scale finished", func(db *unstructured.Unstructured) {
+			readyStatus(db, 2, applied)
+			_ = unstructured.SetNestedSlice(db.Object, []any{
+				map[string]any{"type": "HAReady", "status": "True"},
+				map[string]any{"type": "LDTMScalingInProgress", "status": "False"},
+			}, "status", "conditions")
+		}, true, false},
 		{"HA not ready", func(db *unstructured.Unstructured) {
 			readyStatus(db, 2, applied)
 			_ = unstructured.SetNestedSlice(db.Object, []any{map[string]any{"type": "HAReady", "status": "False"}}, "status", "conditions")
