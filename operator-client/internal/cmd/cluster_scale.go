@@ -123,7 +123,11 @@ func runClusterScale(cmd *cobra.Command, opts *GlobalOptions, name string, f sca
 	printChanges(cmd.ErrOrStderr(), name, changes)
 	prompt := "Apply these changes?"
 	if restartsDatabase(changes) {
-		prompt = "Changing CPU or memory restarts the database. Apply?"
+		if ldtm, _, _ := unstructured.NestedString(patch, "metadata", "annotations", ldtmAnnotation); ldtm == "true" {
+			prompt = "Changing CPU or memory restarts the database; with a ready standby, adbo asks for a low-downtime switchover. Apply?"
+		} else {
+			prompt = "Changing CPU or memory restarts the database, and with no ready standby the cluster is unavailable until it comes back. Apply?"
+		}
 	}
 	ok, err := opts.Confirm(cmd, prompt)
 	if err != nil {
