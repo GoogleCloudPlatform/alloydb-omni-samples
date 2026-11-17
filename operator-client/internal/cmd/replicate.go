@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/wait"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -205,6 +206,7 @@ func newReplicateCommand(opts *GlobalOptions) *cobra.Command {
 	c.PersistentFlags().StringVar(&f.targetNamespace,
 		"target-namespace", "", "namespace of the target (default: -n)")
 	c.AddCommand(newReplicateCreateCommand(opts, &f))
+	c.AddCommand(newReplicateStatusCommand(opts, &f))
 	return c
 }
 func newReplicateCreateCommand(opts *GlobalOptions, f *replicateFlags) *cobra.Command {
@@ -228,4 +230,77 @@ func newReplicateCreateCommand(opts *GlobalOptions, f *replicateFlags) *cobra.Co
 	waitFlags = opts.AddWaitFlags(cmd)
 	return cmd
 
+}
+
+func replicationRow(side, name string, c *k8s.Clients, obj *unstructured.Unstructured) []string {
+	if obj == nil {
+		return []string{side, name, c.Context, c.Namespace, "-", "-", "not found"}
+	}
+	problem := "-"
+	if k8s.ConditionStatus(obj, "Ready") != "True" || (side == "downstream" && k8s.ConditionStatus(obj, "Healthy") != "True") {
+		problem = wait.Reason(obj)
+	}
+	return []string{side, name, c.Context, c.Namespace, k8s.ConditionStatus(obj, "Ready"), k8s.ConditionStatus(obj, "Healthy"), problem}
+}
+
+func findReplication(ctx context.Context, c *k8s.Clients, name string) (*unstructured.Unstructured, error) {
+	obj, err := c.In(k8s.ReplicationGVR).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, c.FormatErr(err)
+	}
+	return obj, nil
+}
+
+func runReplicateStatus(cmd *cobra.Command, opts *GlobalOptions, target string, f replicateFlags) error {
+	ctx := cmd.Context()
+	src, err := newSideClients(opts, f.sourceContext, f.sourceNamespace)
+	if err != nil {
+		return err
+	}
+	dst, err := newSideClients(opts, f.targetContext, f.targetNamespace)
+	if err != nil {
+		return err
+	}
+	upName, downName := target+"-upstream", target+"-downstream"
+	up, err := findReplication(ctx, src, upName)
+	if err != nil {
+		return err
+	}
+	down, err := findReplication(ctx, dst, downName)
+	if err != nil {
+		return err
+	}
+	if up == nil && down == nil {
+		return fmt.Errorf("no replication found for %q: looked for %s%s and %s%s", target, upName, k8s.Location(src.Namespace, src.Context), downName, k8s.Location(dst.Namespace, dst.Context))
+	}
+	table := output.Table{
+		Headers: []string{"SIDE", "NAME", "CONTEXT", "NAMESPACE", "READY", "HEALTHY", "PROBLEM"},
+		Rows: [][]string{
+			replicationRow("upstream", upName, src, up),
+			replicationRow("downstream", downName, dst, down),
+		},
+	}
+	var raw []any
+	for _, obj := range []*unstructured.Unstructured{up, down} {
+		if obj != nil {
+			raw = append(raw, obj.Object)
+		}
+	}
+	return output.Print(cmd.OutOrStdout(), opts.Output, table, raw)
+}
+
+func newReplicateStatusCommand(opts *GlobalOptions, f *replicateFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status TARGET",
+		Short: "Show whether replication into TARGET is working",
+		Example: "  adbo replicate status my-db-copy\n" +
+			"  adbo replicate status my-db-dr --source-context us --target-context eu",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runReplicateStatus(cmd, opts, args[0], *f)
+		},
+	}
 }

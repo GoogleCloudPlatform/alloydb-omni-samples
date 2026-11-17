@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -332,5 +333,96 @@ func TestReplicateCreateNeedsTwoNames(t *testing.T) {
 		if err := cmd.ExecuteContext(t.Context()); err == nil {
 			t.Errorf("args %v: want an error, replicate create needs exactly SOURCE and TARGET", args)
 		}
+	}
+}
+
+// seedReplication stores a Replication on side as if create had run.
+func seedReplication(t *testing.T, side fakeSide, obj *unstructured.Unstructured) {
+	t.Helper()
+	if _, err := side.dyn.Resource(k8s.ReplicationGVR).Namespace(obj.GetNamespace()).Create(t.Context(), obj, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReplicateStatusShowsBothSides(t *testing.T) {
+	src := newFakeSide("us", "prod", nil)
+	dst := newFakeSide("eu", "dr", nil)
+	up := newUpstream("prod", "my-db", "my-copy")
+	publishUpstream(up)
+	seedReplication(t, src, up)
+	down := newDownstream("dr", "my-copy", "pw", up)
+	setConditions(down, "Ready", "True", "Healthy", "False")
+	_ = unstructured.SetNestedSlice(down.Object, []any{
+		map[string]any{"type": "Ready", "status": "True"},
+		map[string]any{"type": "Healthy", "status": "False", "message": "cannot reach 10.0.0.5:5432"},
+	}, "status", "conditions")
+	seedReplication(t, dst, down)
+	opts := replicateOpts(t, src, dst)
+
+	var out, errOut bytes.Buffer
+	if err := runReplicateStatus(scaleCmd(&out, &errOut, ""), opts, "my-copy", usToEU); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want a header and two rows, got:\n%s", out.String())
+	}
+	for _, want := range []string{"upstream", "my-copy-upstream", "us", "prod", "True"} {
+		if !strings.Contains(lines[1], want) {
+			t.Errorf("upstream row missing %q: %s", want, lines[1])
+		}
+	}
+	for _, want := range []string{"downstream", "my-copy-downstream", "eu", "dr", "False", "cannot reach"} {
+		if !strings.Contains(lines[2], want) {
+			t.Errorf("downstream row missing %q: %s", want, lines[2])
+		}
+	}
+}
+
+func TestReplicateStatusMissingSide(t *testing.T) {
+	// After a promote with cleanup the upstream is gone; status still shows the downstream.
+	src := newFakeSide("us", "prod", nil)
+	dst := newFakeSide("eu", "dr", nil)
+	down := newDownstream("dr", "my-copy", "pw", newUpstream("prod", "my-db", "my-copy"))
+	setConditions(down, "Ready", "True", "Healthy", "True")
+	seedReplication(t, dst, down)
+	opts := replicateOpts(t, src, dst)
+
+	var out, errOut bytes.Buffer
+	if err := runReplicateStatus(scaleCmd(&out, &errOut, ""), opts, "my-copy", usToEU); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "not found") {
+		t.Errorf("missing upstream should say not found:\n%s", out.String())
+	}
+}
+
+func TestReplicateStatusNothingFound(t *testing.T) {
+	opts := replicateOpts(t, newFakeSide("us", "prod", nil), newFakeSide("eu", "dr", nil))
+	var out, errOut bytes.Buffer
+	err := runReplicateStatus(scaleCmd(&out, &errOut, ""), opts, "nope", usToEU)
+	if err == nil || !strings.Contains(err.Error(), "no replication found") || !strings.Contains(err.Error(), `"eu"`) {
+		t.Fatalf("err = %v, want it to say where it looked", err)
+	}
+}
+
+func TestReplicateStatusJSON(t *testing.T) {
+	src := newFakeSide("us", "prod", nil)
+	dst := newFakeSide("eu", "dr", nil)
+	up := newUpstream("prod", "my-db", "my-copy")
+	seedReplication(t, src, up)
+	opts := replicateOpts(t, src, dst)
+	opts.Output = output.OutputJSON
+
+	var out, errOut bytes.Buffer
+	if err := runReplicateStatus(scaleCmd(&out, &errOut, ""), opts, "my-copy", usToEU); err != nil {
+		t.Fatal(err)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out.String())
+	}
+	if len(got) != 1 {
+		t.Errorf("want only the existing upstream, got %d objects", len(got))
 	}
 }
