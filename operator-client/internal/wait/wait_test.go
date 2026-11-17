@@ -147,6 +147,32 @@ func TestWatchUntilTimeout(t *testing.T) {
 	if !strings.Contains(err.Error(), `last phase "Running"`) {
 		t.Fatalf("got %v", err)
 	}
+	if strings.Contains(err.Error(), "events:") {
+		t.Fatalf("nil OnTimeout should not add events: %v", err)
+	}
+}
+
+func TestWatchUntilTimeoutIncludesIncidentAndEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := watchUntil(ctx, &staticLW{obj: backup("b1", "Running", "disk is full")}, Options{
+		Name:    "b1",
+		Success: []string{"Succeeded"},
+		Failure: []string{"Failed"},
+		OnTimeout: func(obj *unstructured.Unstructured) string {
+			if Phase(obj) != "Running" {
+				return ""
+			}
+			return "BackupFailed disk is full"
+		},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `last phase "Running"`) || !strings.Contains(msg, "DBSE1012 disk is full") || !strings.Contains(msg, "events: BackupFailed disk is full") {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestWatchUntilOnChange(t *testing.T) {

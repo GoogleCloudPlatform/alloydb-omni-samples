@@ -82,12 +82,22 @@ func TestRunBackupTriggerStopped(t *testing.T) {
 func TestResolveBackupPlanCreatesDefault(t *testing.T) {
 	c := fakeClients()
 	var errOut bytes.Buffer
-	name, err := resolveBackupPlan(context.Background(), c, "my-db", "", &errOut)
+	name, err := resolveBackupPlan(context.Background(), c, "my-db", "", false, &errOut)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if name != "my-db-backupplan" {
 		t.Fatalf("plan name = %q", name)
+	}
+	got, getErr := c.In(k8s.BackupPlanGVR).Get(context.Background(), name, metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	if paused, _, _ := unstructured.NestedBool(got.Object, "spec", "paused"); paused {
+		t.Fatal("default plan should schedule backups")
+	}
+	if strings.Contains(errOut.String(), "paused") {
+		t.Fatalf("default message: %s", errOut.String())
 	}
 	if errOut.Len() == 0 {
 		t.Fatal("expected a note about creating the plan")
@@ -95,10 +105,10 @@ func TestResolveBackupPlanCreatesDefault(t *testing.T) {
 }
 
 func TestResolveBackupPlanAlreadyExistsWrongCluster(t *testing.T) {
-	existing := defaultBackupPlan("adbo-eugene", "other")
+	existing := defaultBackupPlan("adbo-eugene", "other", false)
 	existing.SetName("my-db-backupplan")
 	c := fakeClients(existing)
-	if _, err := resolveBackupPlan(context.Background(), c, "my-db", "", &bytes.Buffer{}); err == nil {
+	if _, err := resolveBackupPlan(context.Background(), c, "my-db", "", false, &bytes.Buffer{}); err == nil {
 		t.Fatal("expected error when the default plan name belongs to another cluster")
 	}
 }
@@ -106,7 +116,7 @@ func TestResolveBackupPlanAlreadyExistsWrongCluster(t *testing.T) {
 func TestRunBackupTriggerNoWait(t *testing.T) {
 	opts := &GlobalOptions{
 		NewClients: func() (*k8s.Clients, error) {
-			return fakeClients(dbcluster("my-db", false, "Ready")), nil
+			return fakeClients(dbcluster("my-db", false, "Ready"), readyPlan("my-db", "my-db-backupplan")), nil
 		},
 	}
 	cmd := newBackupTriggerCommand(opts)
@@ -131,7 +141,7 @@ func TestRunBackupTriggerNoWaitJSON(t *testing.T) {
 	opts := &GlobalOptions{
 		Output: output.OutputJSON,
 		NewClients: func() (*k8s.Clients, error) {
-			return fakeClients(dbcluster("my-db", false, "Ready")), nil
+			return fakeClients(dbcluster("my-db", false, "Ready"), readyPlan("my-db", "my-db-backupplan")), nil
 		},
 	}
 	cmd := newBackupTriggerCommand(opts)
@@ -195,7 +205,7 @@ func TestResolveBackupPlanExplicitMatch(t *testing.T) {
 		"spec":       map[string]any{"dbclusterRef": "my-db"},
 	}}
 	c := fakeClients(existing)
-	name, err := resolveBackupPlan(context.Background(), c, "my-db", "other-plan", &bytes.Buffer{})
+	name, err := resolveBackupPlan(context.Background(), c, "my-db", "other-plan", false, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +222,7 @@ func TestResolveBackupPlanExplicitWrongCluster(t *testing.T) {
 		"spec":       map[string]any{"dbclusterRef": "other"},
 	}}
 	c := fakeClients(existing)
-	_, err := resolveBackupPlan(context.Background(), c, "my-db", "other-plan", &bytes.Buffer{})
+	_, err := resolveBackupPlan(context.Background(), c, "my-db", "other-plan", false, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "other") {
 		t.Fatalf("got %v", err)
 	}
@@ -220,7 +230,7 @@ func TestResolveBackupPlanExplicitWrongCluster(t *testing.T) {
 
 func TestResolveBackupPlanExplicitMissing(t *testing.T) {
 	c := fakeClients()
-	_, err := resolveBackupPlan(context.Background(), c, "my-db", "missing", &bytes.Buffer{})
+	_, err := resolveBackupPlan(context.Background(), c, "my-db", "missing", false, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("got %v", err)
 	}
@@ -234,11 +244,72 @@ func TestResolveBackupPlanReusesExisting(t *testing.T) {
 		"spec":       map[string]any{"dbclusterRef": "my-db"},
 	}}
 	c := fakeClients(existing)
-	name, err := resolveBackupPlan(context.Background(), c, "my-db", "", &bytes.Buffer{})
+	name, err := resolveBackupPlan(context.Background(), c, "my-db", "", false, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if name != "already" {
 		t.Fatalf("plan name = %q", name)
+	}
+}
+
+func readyPlan(clusterName, name string) *unstructured.Unstructured {
+	plan := defaultBackupPlan("adbo-eugene", clusterName, false)
+	plan.SetName(name)
+	plan.Object["status"] = map[string]any{"phase": "Ready"}
+	return plan
+}
+
+func TestResolveBackupPlanRequiresChoice(t *testing.T) {
+	first := readyPlan("my-db", "plan-a")
+	second := readyPlan("my-db", "plan-b")
+	c := fakeClients(first, second)
+	_, err := resolveBackupPlan(context.Background(), c, "my-db", "", false, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "--plan") || !strings.Contains(err.Error(), "plan-a") || !strings.Contains(err.Error(), "plan-b") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestResolveBackupPlanPaused(t *testing.T) {
+	c := fakeClients()
+	name, err := resolveBackupPlan(context.Background(), c, "my-db", "", true, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.In(k8s.BackupPlanGVR).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paused, _, _ := unstructured.NestedBool(got.Object, "spec", "paused")
+	if !paused {
+		t.Fatal("expected --paused to set spec.paused")
+	}
+}
+
+func TestRunBackupTriggerNamedBackup(t *testing.T) {
+	opts := &GlobalOptions{
+		NewClients: func() (*k8s.Clients, error) {
+			return fakeClients(dbcluster("my-db", false, "Ready"), readyPlan("my-db", "my-db-backupplan")), nil
+		},
+	}
+	cmd := newBackupTriggerCommand(opts)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+	cmd.SetArgs([]string{"my-db", "--no-wait", "--name", "nightly"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("nightly")) {
+		t.Fatalf("stdout %q", stdout.String())
+	}
+}
+
+func TestRunBackupTriggerRejectsName(t *testing.T) {
+	cmd := newBackupTriggerCommand(&GlobalOptions{})
+	cmd.SetArgs([]string{"my-db", "--name", "Not_Valid"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "DNS subdomain") {
+		t.Fatalf("got %v", err)
 	}
 }

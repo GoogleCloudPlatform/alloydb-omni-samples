@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,7 +25,10 @@ func main() {
 	err := cmd.NewRootCommand().ExecuteContext(ctx)
 	stop()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", k8s.Format(err, "", ""))
+		// doctor already printed "installation: not ready".
+		if !errors.Is(err, cmd.ErrReported) {
+			fmt.Fprintln(os.Stderr, "Error:", k8s.Format(err, "", ""))
+		}
 		os.Exit(1)
 	}
 }

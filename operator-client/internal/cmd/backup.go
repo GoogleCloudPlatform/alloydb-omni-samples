@@ -1,11 +1,8 @@
 package cmd
 
 import (
-	"time"
-
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/util/duration"
 )
 
 // newBackupCommand is the `adbo backup` group (aliases: backups, bk).
@@ -47,13 +44,29 @@ func physicalBackupType(obj *unstructured.Unstructured) string {
 	return t
 }
 
-func resourceAge(obj *unstructured.Unstructured) string {
+// backupID reads status.physicalBackupStatus.backupID.
+func backupID(obj *unstructured.Unstructured) string {
 	if obj == nil {
 		return ""
 	}
-	ts := obj.GetCreationTimestamp()
-	if ts.IsZero() {
+	id, _, _ := unstructured.NestedString(obj.Object, "status", "physicalBackupStatus", "backupID")
+	return id
+}
+
+// backupPlanRef reads spec.backupPlanRef.
+func backupPlanRef(obj *unstructured.Unstructured) string {
+	if obj == nil {
 		return ""
 	}
-	return duration.HumanDuration(time.Since(ts.Time))
+	ref, _, _ := unstructured.NestedString(obj.Object, "spec", "backupPlanRef")
+	return ref
+}
+
+// statusTime reads status.createTime or status.completeTime.
+func statusTime(obj *unstructured.Unstructured, field string) string {
+	if obj == nil {
+		return ""
+	}
+	s, _, _ := unstructured.NestedString(obj.Object, "status", field)
+	return s
 }

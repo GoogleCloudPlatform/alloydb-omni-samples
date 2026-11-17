@@ -51,6 +51,26 @@ func TestGroupRejectsUnknownVerb(t *testing.T) {
 	}
 }
 
+func TestRootAllowsZeroTimeout(t *testing.T) {
+	root := NewRootCommand()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--timeout", "0"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRootRejectsNegativeTimeout(t *testing.T) {
+	root := NewRootCommand()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--timeout", "-1s"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("expected negative --timeout to fail")
+	}
+}
+
 func TestRootRejectsInvalidOutput(t *testing.T) {
 	root := NewRootCommand()
 	root.SetArgs([]string{"-o", "xml"})
