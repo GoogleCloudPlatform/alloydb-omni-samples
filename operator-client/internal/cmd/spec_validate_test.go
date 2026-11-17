@@ -32,7 +32,7 @@ func TestValidateSpec(t *testing.T) {
 		{"standbys as text", func(db *unstructured.Unstructured) { set(db, "3", standbysPath...) }, ""},
 		{"too many standbys", func(db *unstructured.Unstructured) { set(db, int64(6), standbysPath...) }, "between 0 and 5"},
 		{"negative standbys", func(db *unstructured.Unstructured) { set(db, int64(-1), standbysPath...) }, "between 0 and 5"},
-		{"standbys not a number", func(db *unstructured.Unstructured) { set(db, "lots", standbysPath...) }, "between 0 and 5"},
+		{"standbys not a number", func(db *unstructured.Unstructured) { set(db, "lots", standbysPath...) }, "is not a number"},
 
 		{"more cpu", func(db *unstructured.Unstructured) { set(db, int64(4), resource("cpu")...) }, ""},
 		{"millicores", func(db *unstructured.Unstructured) { set(db, "500m", resource("cpu")...) }, ""},

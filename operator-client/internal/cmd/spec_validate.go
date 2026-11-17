@@ -11,11 +11,13 @@ func validateSpec(old, updated *unstructured.Unstructured) error {
 	if old == nil {
 		old = &unstructured.Unstructured{Object: map[string]any{}}
 	}
-	const maxStandbys = 5
 	if v, found, _ := unstructured.NestedFieldNoCopy(updated.Object, standbysPath...); found {
 		n, err := strconv.ParseInt(fmt.Sprint(v), 10, 64)
-		if err != nil || n < 0 || n > maxStandbys {
-			return fmt.Errorf("spec.availability.numberOfStandbys must be between 0 and %d, got %v", maxStandbys, v)
+		if err != nil {
+			return fmt.Errorf("spec.availability.numberOfStandbys %v is not a number", v)
+		}
+		if err := checkStandbys(n); err != nil {
+			return fmt.Errorf("spec.availability.numberOfStandbys: %w", err)
 		}
 	}
 
@@ -58,12 +60,29 @@ func validateSpec(old, updated *unstructured.Unstructured) error {
 		delete(oldSizes, name)
 		before, err1 := resource.ParseQuantity(was)
 		after, err2 := resource.ParseQuantity(size)
-		if err1 == nil && err2 == nil && after.Cmp(before) < 0 {
-			return fmt.Errorf("disk %s: %s is smaller than the current %s; disks can grow but not shrink", name, after.String(), was)
+		if err1 == nil && err2 == nil {
+			if err := checkDiskGrow(name, before, after); err != nil {
+				return err
+			}
 		}
 	}
 	for name := range oldSizes {
 		return fmt.Errorf("disk %s was removed; adbo does not remove disks from a cluster", name)
+	}
+	return nil
+}
+
+func checkStandbys(n int64) error {
+	const maxStandbys = 5
+	if n < 0 || n > maxStandbys {
+		return fmt.Errorf("standbys must be between 0 and %d, got %d", maxStandbys, n)
+	}
+	return nil
+}
+
+func checkDiskGrow(name string, before, after resource.Quantity) error {
+	if after.Cmp(before) < 0 {
+		return fmt.Errorf("disk %s: %s is smaller than the current %s; disks can grow but not shrink", name, after.String(), before.String())
 	}
 	return nil
 }
