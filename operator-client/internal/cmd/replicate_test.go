@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	typedfake "k8s.io/client-go/kubernetes/fake"
 
@@ -488,11 +491,28 @@ func TestReplicatePromoteKeepsUpstreamAndWarns(t *testing.T) {
 	}
 }
 
+// finishPromote plays the operator: once control is promote, report the
+// new generation as observed. The fake API server does not bump generation.
+func finishPromote(t *testing.T, dst fakeSide) {
+	playOperator(t, dst, "dr", "my-copy-downstream", func(d *unstructured.Unstructured) {
+		for k8s.StringField(d, "spec", "downstream", "control") != "promote" {
+			time.Sleep(10 * time.Millisecond)
+			got, err := dst.dyn.Resource(k8s.ReplicationGVR).Namespace("dr").Get(context.Background(), "my-copy-downstream", metav1.GetOptions{})
+			if err != nil {
+				return
+			}
+			*d = *got
+		}
+		_ = unstructured.SetNestedField(d.Object, int64(2), "status", "observedGeneration")
+	})
+}
+
 func TestReplicatePromoteCleanupUpstream(t *testing.T) {
 	src, dst := linkedSides(t)
 	opts := replicateOpts(t, src, dst)
 	opts.Yes = true
-	f := usToEU
+	finishPromote(t, dst)
+	f := usToEU // no --wait: cleanup must still wait for the promote
 	f.cleanUpstream = true
 	var out, errOut bytes.Buffer
 	if err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "my-copy", f); err != nil {
@@ -503,6 +523,9 @@ func TestReplicatePromoteCleanupUpstream(t *testing.T) {
 	}
 	if strings.Contains(errOut.String(), "Warning") {
 		t.Errorf("no warning expected after cleanup:\n%s", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "Waiting for") || !strings.Contains(out.String(), `Promoted "my-copy"`) {
+		t.Errorf("--cleanup-upstream should wait for the promote before removing the source side; out=%q err=%q", out.String(), errOut.String())
 	}
 }
 
@@ -679,5 +702,85 @@ func TestReplicateSubcommandsNeedTarget(t *testing.T) {
 		if err := cmd.ExecuteContext(t.Context()); err == nil {
 			t.Errorf("%s without TARGET: want an error (names are always required)", sub)
 		}
+	}
+}
+
+func TestCopyReplicationSecretUsesPublishedNamespace(t *testing.T) {
+	// The operator may keep the password in another namespace than the cluster.
+	other := repSecret()
+	other.Namespace = "secrets"
+	src := newFakeSide("us", "prod", nil, other)
+	dst := newFakeSide("eu", "dr", nil)
+	up := newUpstream("prod", "my-db", "my-copy")
+	publishUpstream(up)
+	_ = unstructured.SetNestedField(up.Object, "secrets", "status", "upstream", "password", "namespace")
+	if _, err := copyReplicationSecret(t.Context(), src.c, dst.c, up, "my-copy"); err != nil {
+		t.Fatalf("secret in status.upstream.password.namespace not found: %v", err)
+	}
+}
+
+func TestCopyReplicationSecretRefreshesExistingCopy(t *testing.T) {
+	src := newFakeSide("us", "prod", nil, repSecret())
+	stale := copiedSecret()
+	stale.Data = map[string][]byte{"password": []byte("old")}
+	dst := newFakeSide("eu", "dr", nil, stale)
+	up := newUpstream("prod", "my-db", "my-copy")
+	publishUpstream(up)
+	if _, err := copyReplicationSecret(t.Context(), src.c, dst.c, up, "my-copy"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := dst.c.Typed.CoreV1().Secrets("dr").Get(t.Context(), "my-copy-replication-pw", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(s.Data["password"]) != "r3pl" {
+		t.Errorf("copy still has the old password %q", s.Data["password"])
+	}
+}
+
+func TestNewSideClientsKeepsUserFlags(t *testing.T) {
+	// A kubeconfig with two clusters, us and eu, each with its own server.
+	kubeconfig := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(kubeconfig, []byte(`apiVersion: v1
+kind: Config
+current-context: us
+clusters:
+- name: us
+  cluster: {server: "https://us.example"}
+- name: eu
+  cluster: {server: "https://eu.example"}
+users:
+- name: me
+  user: {token: from-kubeconfig}
+contexts:
+- name: us
+  context: {cluster: us, user: me, namespace: prod}
+- name: eu
+  context: {cluster: eu, user: me, namespace: dr}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	global := genericclioptions.NewConfigFlags(true)
+	global.KubeConfig = &kubeconfig
+	token, as := "from-flag", "someone"
+	global.BearerToken, global.Impersonate = &token, &as
+	opts := &GlobalOptions{KubeFlags: global}
+
+	// Same context, other namespace: every global flag still applies.
+	c, err := newSideClients(opts, "", "other-ns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Namespace != "other-ns" || c.REST.Host != "https://us.example" || c.REST.BearerToken != "from-flag" || c.REST.Impersonate.UserName != "someone" {
+		t.Errorf("same context: ns=%q host=%q token=%q as=%q", c.Namespace, c.REST.Host, c.REST.BearerToken, c.REST.Impersonate.UserName)
+	}
+
+	// Other context: its own server and credentials, but --as still applies.
+	c, err = newSideClients(opts, "eu", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Context != "eu" || c.REST.Host != "https://eu.example" || c.REST.BearerToken != "from-kubeconfig" || c.REST.Impersonate.UserName != "someone" {
+		t.Errorf("other context: ctx=%q host=%q token=%q as=%q", c.Context, c.REST.Host, c.REST.BearerToken, c.REST.Impersonate.UserName)
 	}
 }

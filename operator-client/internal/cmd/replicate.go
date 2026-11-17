@@ -29,11 +29,24 @@ var newSideClients = func(opts *GlobalOptions, kubeContext, namespace string) (*
 	if kubeContext == "" && namespace == "" {
 		return opts.Clients()
 	}
+	// ConfigFlags holds locks and a cached config, so copy fields one by one
+	// instead of copying the struct.
 	flags := genericclioptions.NewConfigFlags(true)
-	if opts.KubeFlags != nil {
-		flags.KubeConfig = opts.KubeFlags.KubeConfig
-		flags.Context = opts.KubeFlags.Context
-		flags.Namespace = opts.KubeFlags.Namespace
+	if g := opts.KubeFlags; g != nil {
+		// Settings about the user or this machine apply to both sides.
+		flags.KubeConfig, flags.CacheDir, flags.Namespace = g.KubeConfig, g.CacheDir, g.Namespace
+		flags.Impersonate, flags.ImpersonateUID = g.Impersonate, g.ImpersonateUID
+		flags.ImpersonateGroup, flags.ImpersonateUserExtra = g.ImpersonateGroup, g.ImpersonateUserExtra
+		flags.Timeout, flags.DisableCompression, flags.ProxyURL = g.Timeout, g.DisableCompression, g.ProxyURL
+		// Server and credentials belong to one cluster: keep them only when
+		// this side stays on the global context, otherwise the side's own
+		// context supplies them.
+		if kubeContext == "" {
+			flags.Context, flags.ClusterName, flags.AuthInfoName = g.Context, g.ClusterName, g.AuthInfoName
+			flags.APIServer, flags.TLSServerName, flags.Insecure = g.APIServer, g.TLSServerName, g.Insecure
+			flags.CertFile, flags.KeyFile, flags.CAFile = g.CertFile, g.KeyFile, g.CAFile
+			flags.BearerToken, flags.Username, flags.Password = g.BearerToken, g.Username, g.Password
+		}
 	}
 	if kubeContext != "" {
 		flags.Context = &kubeContext
@@ -95,7 +108,7 @@ func upstreamReady(up *unstructured.Unstructured) (bool, error) {
 
 func copyReplicationSecret(ctx context.Context, src, dst *k8s.Clients, up *unstructured.Unstructured, target string) (string, error) {
 	name := k8s.StringField(up, "status", "upstream", "password", "name")
-	ns := k8s.StringField(up, "status", "upstream", "password", "namaespace")
+	ns := k8s.StringField(up, "status", "upstream", "password", "namespace")
 	if ns == "-" {
 		ns = src.Namespace
 	}
@@ -104,11 +117,21 @@ func copyReplicationSecret(ctx context.Context, src, dst *k8s.Clients, up *unstr
 		return "", src.FormatErr(err)
 	}
 	copyName := target + "-replication-pw"
-	_, err = dst.Typed.CoreV1().Secrets(dst.Namespace).Create(ctx, &corev1.Secret{
+	secrets := dst.Typed.CoreV1().Secrets(dst.Namespace)
+	_, err = secrets.Create(ctx, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: copyName, Namespace: dst.Namespace},
 		Data:       secret.Data,
 	}, metav1.CreateOptions{})
-	if err != nil && !apierrors.IsAlreadyExists(err) {
+	if apierrors.IsAlreadyExists(err) {
+		// Left from an earlier run; refresh it in case the password changed.
+		existing, getErr := secrets.Get(ctx, copyName, metav1.GetOptions{})
+		if getErr != nil {
+			return "", dst.FormatErr(getErr)
+		}
+		existing.Data = secret.Data
+		_, err = secrets.Update(ctx, existing, metav1.UpdateOptions{})
+	}
+	if err != nil {
 		return "", dst.FormatErr(err)
 	}
 	return copyName, nil
@@ -129,7 +152,7 @@ func runReplicateCreate(cmd *cobra.Command, opts *GlobalOptions, source, target 
 		return err
 	}
 	if source == target && src.Context == dst.Context && src.Namespace == dst.Namespace {
-		return fmt.Errorf("source and target are the same cluster %q: a clluster cannot replicate to itself", source)
+		return fmt.Errorf("source and target are the same cluster %q: a cluster cannot replicate to itself", source)
 	}
 	if _, err := src.In(k8s.DBClusterGVR).Get(ctx, source, metav1.GetOptions{}); err != nil {
 		return src.FormatErr(err)
@@ -349,7 +372,10 @@ func runReplicatePromote(cmd *cobra.Command, opts *GlobalOptions, target string,
 	if err != nil {
 		return dst.FormatErr(err)
 	}
-	if f.wait {
+	// Removing the source side before the promote finishes could cut the
+	// target off mid-promote, so --cleanup-upstream always waits.
+	waited := f.wait || f.cleanUpstream
+	if waited {
 		waitCtx, cancel := opts.WithTimeout(ctx)
 		defer cancel()
 		fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for %q to finish promoting...\n", target)
@@ -377,7 +403,7 @@ func runReplicatePromote(cmd *cobra.Command, opts *GlobalOptions, target string,
 		return output.Print(out, opts.Output, output.Table{}, promoted.Object)
 	}
 	verb := "Promoting"
-	if f.wait {
+	if waited {
 		verb = "Promoted"
 	}
 	fmt.Fprintf(out, "%s %q%s; it is now a separate, writeable cluster.\n", verb, target, k8s.Location(dst.Namespace, dst.Context))
@@ -400,7 +426,7 @@ func newReplicatePromoteCommand(opts *GlobalOptions, f *replicateFlags) *cobra.C
 		Long: "Cut TARGET loose from its source. adbo asks first (-y skips). Afterwards the\n" + "source still keeps changes for TARGET until its side is removed, which can\n" +
 			"fill its disk: pass --cleanup-upstream, or run `adbo replicate delete` later.",
 		Example: "  adbo replicate promote my-db-copy\n" +
-			"  adbo replicate promote my-db-dr cleanup-upstream --source-context us --target-context eu",
+			"  adbo replicate promote my-db-dr --cleanup-upstream --source-context us --target-context eu",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f.wait = waitFlags.Enabled()
