@@ -572,3 +572,112 @@ func TestReplicatePromoteNoReplication(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func copiedSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-copy-replication-pw", Namespace: "dr"},
+		Data:       map[string][]byte{"password": []byte("r3pl")},
+	}
+}
+
+func replicationExists(t *testing.T, side fakeSide, ns, name string) bool {
+	t.Helper()
+	_, err := side.dyn.Resource(k8s.ReplicationGVR).Namespace(ns).Get(t.Context(), name, metav1.GetOptions{})
+	return err == nil
+}
+
+func TestReplicateDeleteRemovesBothSidesAndSecret(t *testing.T) {
+	src, dst := linkedSides(t)
+	if _, err := dst.c.Typed.CoreV1().Secrets("dr").Create(t.Context(), copiedSecret(), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.c.Typed.CoreV1().Secrets("prod").Create(t.Context(), repSecret(), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	opts := replicateOpts(t, src, dst)
+	var out, errOut bytes.Buffer
+	if err := runReplicateDelete(scaleCmd(&out, &errOut, "y\n"), opts, "my-copy", usToEU); err != nil {
+		t.Fatalf("%v\nstderr:\n%s", err, errOut.String())
+	}
+	for _, want := range []string{"both clusters keep their data", "has not been promoted", "read-only copy", "Continue?"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("prompt missing %q:\n%s", want, errOut.String())
+		}
+	}
+	if replicationExists(t, dst, "dr", "my-copy-downstream") {
+		t.Error("downstream still exists on the target")
+	}
+	if replicationExists(t, src, "prod", "my-copy-upstream") {
+		t.Error("upstream still exists on the source")
+	}
+	if _, err := dst.c.Typed.CoreV1().Secrets("dr").Get(t.Context(), "my-copy-replication-pw", metav1.GetOptions{}); err == nil {
+		t.Error("copied secret still exists on the target")
+	}
+	// The operator's own secret on the source is not ours to delete.
+	if _, err := src.c.Typed.CoreV1().Secrets("prod").Get(t.Context(), "ha-rep-pw-my-db", metav1.GetOptions{}); err != nil {
+		t.Errorf("source secret was deleted: %v", err)
+	}
+	for _, want := range []string{"my-copy-downstream", "my-copy-upstream", "my-copy-replication-pw"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("summary missing %q: %s", want, out.String())
+		}
+	}
+}
+
+func TestReplicateDeleteAfterCleanupUpstream(t *testing.T) {
+	// promote --cleanup-upstream already removed the source side: delete still works.
+	src := newFakeSide("us", "prod", nil)
+	dst := newFakeSide("eu", "dr", nil)
+	down := newDownstream("dr", "my-copy", "pw", newUpstream("prod", "my-db", "my-copy"))
+	_ = unstructured.SetNestedField(down.Object, "promote", "spec", "downstream", "control")
+	seedReplication(t, dst, down)
+	opts := replicateOpts(t, src, dst)
+	opts.Yes = true
+	var out, errOut bytes.Buffer
+	if err := runReplicateDelete(scaleCmd(&out, &errOut, ""), opts, "my-copy", usToEU); err != nil {
+		t.Fatal(err)
+	}
+	if replicationExists(t, dst, "dr", "my-copy-downstream") {
+		t.Error("downstream still exists")
+	}
+	if strings.Contains(errOut.String(), "has not been promoted") {
+		t.Errorf("promoted target should not get the read-only warning:\n%s", errOut.String())
+	}
+}
+
+func TestReplicateDeleteDeclined(t *testing.T) {
+	src, dst := linkedSides(t)
+	opts := replicateOpts(t, src, dst)
+	var out, errOut bytes.Buffer
+	err := runReplicateDelete(scaleCmd(&out, &errOut, "n\n"), opts, "my-copy", usToEU)
+	if !errors.Is(err, errDeclined) {
+		t.Fatalf("want errDeclined, got %v", err)
+	}
+	if !replicationExists(t, dst, "dr", "my-copy-downstream") || !replicationExists(t, src, "prod", "my-copy-upstream") {
+		t.Error("declining removed something")
+	}
+}
+
+func TestReplicateDeleteNothingFound(t *testing.T) {
+	opts := replicateOpts(t, newFakeSide("us", "prod", nil), newFakeSide("eu", "dr", nil))
+	opts.Yes = true
+	var out, errOut bytes.Buffer
+	err := runReplicateDelete(scaleCmd(&out, &errOut, ""), opts, "nope", usToEU)
+	if err == nil || !strings.Contains(err.Error(), "no replication found") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReplicateSubcommandsNeedTarget(t *testing.T) {
+	opts := &GlobalOptions{Output: output.OutputTable}
+	for _, sub := range []string{"status", "promote", "delete"} {
+		cmd := newReplicateCommand(opts)
+		var out, errOut bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs([]string{sub})
+		if err := cmd.ExecuteContext(t.Context()); err == nil {
+			t.Errorf("%s without TARGET: want an error (names are always required)", sub)
+		}
+	}
+}

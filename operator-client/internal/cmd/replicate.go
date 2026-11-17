@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"strings"
 )
 
 type replicateFlags struct {
@@ -210,6 +211,7 @@ func newReplicateCommand(opts *GlobalOptions) *cobra.Command {
 	c.AddCommand(newReplicateCreateCommand(opts, &f))
 	c.AddCommand(newReplicateStatusCommand(opts, &f))
 	c.AddCommand(newReplicatePromoteCommand(opts, &f))
+	c.AddCommand(newReplicateDeleteCommand(opts, &f))
 	return c
 }
 func newReplicateCreateCommand(opts *GlobalOptions, f *replicateFlags) *cobra.Command {
@@ -409,4 +411,81 @@ func newReplicatePromoteCommand(opts *GlobalOptions, f *replicateFlags) *cobra.C
 	waitFlags = opts.AddWaitFlags(cmd)
 	return cmd
 
+}
+
+func runReplicateDelete(cmd *cobra.Command, opts *GlobalOptions, target string, f replicateFlags) error {
+	ctx := cmd.Context()
+	src, err := newSideClients(opts, f.sourceContext, f.sourceNamespace)
+	if err != nil {
+		return err
+	}
+	dst, err := newSideClients(opts, f.targetContext, f.targetNamespace)
+	if err != nil {
+		return err
+	}
+	upName, downName := target+"-upstream", target+"-downstream"
+	up, err := findReplication(ctx, src, upName)
+	if err != nil {
+		return err
+	}
+	down, err := findReplication(ctx, dst, downName)
+	if err != nil {
+		return err
+	}
+	if up == nil && down == nil {
+		return fmt.Errorf("no replication found for %q: looked for %s%s and %s%s", target, upName, k8s.Location(src.Namespace, src.Context), downName, k8s.Location(dst.Namespace, dst.Context))
+	}
+	prompt := fmt.Sprintf("Remove the replication into %q%s? Copying stops; both clusters keep their data.", target, k8s.Location(dst.Namespace, dst.Context))
+	if down != nil && k8s.StringField(down, "spec", "downstream", "control") != "promote" {
+		prompt += fmt.Sprintf("\n%q has not been promoted, so it stays a read-only copy that no longer updates.", target)
+	}
+	ok, err := opts.Confirm(cmd, prompt+" Continue?")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errDeclined
+	}
+	var removed []string
+	remove := func(c *k8s.Clients, what, name string, del func() error) error {
+		if err := del(); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("removing %s %s: %w", what, name, c.FormatErr(err))
+		}
+		removed = append(removed, what+" "+name)
+		return nil
+	}
+	if err := remove(dst, "replication", downName, func() error {
+		return dst.In(k8s.ReplicationGVR).Delete(ctx, downName, metav1.DeleteOptions{})
+	}); err != nil {
+		return err
+	}
+	if err := remove(src, "replication", upName, func() error {
+		return src.In(k8s.ReplicationGVR).Delete(ctx, upName, metav1.DeleteOptions{})
+	}); err != nil {
+		return err
+	}
+	secretName := target + "-replication-pw"
+	if err := remove(dst, "secret", secretName, func() error {
+		return dst.Typed.CoreV1().Secrets(dst.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+	}); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Removed the replication into %q (%s).\n", target, strings.Join(removed, ", "))
+	return nil
+}
+
+func newReplicateDeleteCommand(opts *GlobalOptions, f *replicateFlags) *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete TARGET",
+		Short: "Stop replicating into TARGET and remove both sides (no data is deleted)",
+		Long: "Remove the Replication objects on both sides and the password Secret adbo\n" +
+			"copied to the target. Both clusters and their data stay. adbo asks first\n" +
+			"(-y skips).",
+		Example: "  adbo replicate delete my-db-copy\n" +
+			"  adbo replicate delete my-db-dr --source-context us --target-context eu -y",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runReplicateDelete(cmd, opts, args[0], *f)
+		},
+	}
 }
