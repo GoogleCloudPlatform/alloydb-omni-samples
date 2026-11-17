@@ -147,7 +147,7 @@ func runVersionChange(cmd *cobra.Command, opts *GlobalOptions, name string, f ve
 		fmt.Fprintf(out, "Cluster %q is already on these versions; nothing to do.\n", name)
 		return nil
 	}
-	if dir > 0 && hasReadyStandby(db) {
+	if dir > 0 && hasReadyStandby(db) && db.GetAnnotations()[ldtmAnnotation] != "false" {
 		if err := unstructured.SetNestedField(patch, "true", "metadata", "annotations", ldtmAnnotation); err != nil {
 			return err
 		}

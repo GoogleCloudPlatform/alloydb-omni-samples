@@ -190,10 +190,14 @@ func TestClusterUpgradeLowDowntimeOnlyWithReadyStandby(t *testing.T) {
 	}{
 		{"no standby", 0, ""},
 		{"ready standby", 1, "true"},
+		{"user turned it off", 1, "false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := versionedCluster("my-db")
 			_ = unstructured.SetNestedField(db.Object, tc.standbys, standbysPath...)
+			if tc.want == "false" {
+				db.SetAnnotations(map[string]string{ldtmAnnotation: "false"})
+			}
 			opts := fakeOpts(output.OutputTable, db)
 			var out, errOut bytes.Buffer
 			if err := runVersionChange(scaleCmd(&out, &errOut, ""), opts, "my-db", versionFlags{version: "16.9.0"}, 1); err != nil {
