@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -261,9 +262,16 @@ func TestRestoreRejects(t *testing.T) {
 	}
 }
 
+// withPasswordRef points db at its db-pw-<name> Secret, as clusters
+// created with a password do.
+func withPasswordRef(db *unstructured.Unstructured) *unstructured.Unstructured {
+	_ = unstructured.SetNestedField(db.Object, "db-pw-"+db.GetName(), "spec", "primarySpec", "adminUser", "passwordRef", "name")
+	return db
+}
+
 func TestRestoreCloneCopiesSecretWithoutPrompt(t *testing.T) {
 	opts, _ := restoreOpts([]runtime.Object{
-		dbCluster("default", "my-db", "DBClusterReady"),
+		withPasswordRef(dbCluster("default", "my-db", "DBClusterReady")),
 		testBackup("b1", "my-db", "Succeeded", "id-1"),
 	}, pwSecret("my-db"))
 	var out, errOut bytes.Buffer
@@ -432,5 +440,124 @@ func TestRestoreFailsFastWithoutTerminal(t *testing.T) {
 	err = runRestoreCommand(t, opts, r, "my-db", "--backup", "b1", "--no-wait")
 	if err == nil || !strings.Contains(err.Error(), "stdin is not a terminal") {
 		t.Fatalf("want not-a-terminal error, got %v", err)
+	}
+}
+
+func TestRestoreCloneSkipsSecretWhenSourceHasNone(t *testing.T) {
+	// No passwordRef and no db-pw-my-db Secret: the clone must still go ahead.
+	opts, _ := restoreOpts([]runtime.Object{
+		dbCluster("default", "my-db", "DBClusterReady"),
+		testBackup("b1", "my-db", "Succeeded", "id-1"),
+	})
+	var out, errOut bytes.Buffer
+	if err := runRestore(restoreCmd(&out, &errOut, ""), opts, "my-db", restoreFlags{backup: "b1", to: "my-copy"}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := opts.Clients()
+	if _, err := c.Typed.CoreV1().Secrets("default").Get(t.Context(), "db-pw-my-copy", metav1.GetOptions{}); err == nil {
+		t.Error("no source secret, so no secret should be created")
+	}
+	if n := len(listRestores(t, opts)); n != 1 {
+		t.Fatalf("want 1 Restore, got %d", n)
+	}
+}
+
+func TestRestorePointInTimeWithoutToIsReportedFirst(t *testing.T) {
+	// Without a terminal and without -y, the flag mistake must still be the
+	// error the user sees, not "pass -y".
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	opts, _ := restoreOpts([]runtime.Object{dbCluster("default", "my-db", "DBClusterReady")})
+	err = runRestoreCommand(t, opts, r, "my-db", "--point-in-time", "2026-11-16T10:00:00Z")
+	if err == nil || !strings.Contains(err.Error(), "--point-in-time needs --to") {
+		t.Fatalf("err = %v, want the --point-in-time needs --to error", err)
+	}
+}
+
+// noCompleteTime is a Succeeded backup whose status has no completeTime.
+func noCompleteTime() *unstructured.Unstructured {
+	b := testBackup("b1", "my-db", "Succeeded", "id-1")
+	unstructured.RemoveNestedField(b.Object, "status", "completeTime")
+	return b
+}
+
+func TestRestoreBackupWithoutCompleteTime(t *testing.T) {
+	// A clone needs the time, so it refuses instead of sending pointInTime "-".
+	opts, _ := restoreOpts([]runtime.Object{dbCluster("default", "my-db", "DBClusterReady"), noCompleteTime()})
+	var out, errOut bytes.Buffer
+	err := runRestore(restoreCmd(&out, &errOut, ""), opts, "my-db", restoreFlags{backup: "b1", to: "my-copy"})
+	if err == nil || !strings.Contains(err.Error(), "no completeTime") {
+		t.Fatalf("clone: err = %v, want a no completeTime error", err)
+	}
+	if n := len(listRestores(t, opts)); n != 0 {
+		t.Errorf("clone: created %d Restores, want 0", n)
+	}
+
+	// In place does not need the time; the prompt just says it is unknown.
+	opts, _ = restoreOpts([]runtime.Object{dbCluster("default", "my-db", "DBClusterReady"), noCompleteTime()})
+	errOut.Reset()
+	err = runRestore(restoreCmd(&out, &errOut, "n\n"), opts, "my-db", restoreFlags{backup: "b1"})
+	if !errors.Is(err, errDeclined) {
+		t.Fatalf("in place: err = %v, want errDeclined", err)
+	}
+	if !strings.Contains(errOut.String(), "taken at an unknown time") || strings.Contains(errOut.String(), "taken -") {
+		t.Errorf("in place prompt should say the time is unknown, got:\n%s", errOut.String())
+	}
+}
+
+func TestRestoreCloneRemovesSecretWhenRestoreFails(t *testing.T) {
+	opts, dyn := restoreOpts([]runtime.Object{
+		withPasswordRef(dbCluster("default", "my-db", "DBClusterReady")),
+		testBackup("b1", "my-db", "Succeeded", "id-1"),
+	}, pwSecret("my-db"))
+	dyn.PrependReactor("create", "restores", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("admission webhook said no")
+	})
+	var out, errOut bytes.Buffer
+	err := runRestore(restoreCmd(&out, &errOut, ""), opts, "my-db", restoreFlags{backup: "b1", to: "my-copy"})
+	if err == nil || !strings.Contains(err.Error(), "admission webhook said no") {
+		t.Fatalf("err = %v, want the Restore create error", err)
+	}
+	c, _ := opts.Clients()
+	if _, err := c.Typed.CoreV1().Secrets("default").Get(t.Context(), "db-pw-my-copy", metav1.GetOptions{}); err == nil {
+		t.Error("db-pw-my-copy was left behind after the Restore failed")
+	}
+	if _, err := c.Typed.CoreV1().Secrets("default").Get(t.Context(), "db-pw-my-db", metav1.GetOptions{}); err != nil {
+		t.Errorf("the source secret must not be touched: %v", err)
+	}
+}
+
+func TestWaitForClusterReadyFailsFast(t *testing.T) {
+	opts, _ := restoreOpts([]runtime.Object{dbCluster("default", "my-db", "DBClusterReconcileFailed")})
+	c, _ := opts.Clients()
+	var out, errOut bytes.Buffer
+	start := time.Now()
+	_, err := waitForClusterReady(t.Context(), restoreCmd(&out, &errOut, ""), opts, c, "my-db")
+	if err == nil || !strings.Contains(err.Error(), "failed after the restore") {
+		t.Fatalf("err = %v, want a failed-after-restore error", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Errorf("took %s; a Failed phase should stop the wait at once", time.Since(start))
+	}
+}
+
+func TestWaitForClusterReadyUsesCallersDeadline(t *testing.T) {
+	// The caller's ctx is the only clock: opts.Timeout (5s) must not restart it.
+	opts, _ := restoreOpts([]runtime.Object{dbCluster("default", "my-db", "DBClusterReconciling")})
+	c, _ := opts.Clients()
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	var out, errOut bytes.Buffer
+	start := time.Now()
+	_, err := waitForClusterReady(ctx, restoreCmd(&out, &errOut, ""), opts, c, "my-db")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a deadline error", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("took %s; it should stop when the caller's 200ms runs out", time.Since(start))
 	}
 }

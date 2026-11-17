@@ -49,15 +49,15 @@ func newRestoreCommand(opts *GlobalOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if f.pointInTime != "" && f.to == "" {
+				return errors.New("--point-in-time needs --to: a point-in-time restore always creates a new cluster")
+			}
 			explicit := len(args) > 0
 			if f.to == "" && opts.Yes && !explicit {
 				return fmt.Errorf("restore with -y needs an explicit CLUSTER_NAME; "+"the selected cluster %q is only used with an interactive confirmation", name)
 			}
 			if f.to == "" && !opts.Yes && !isInteractive(cmd) {
 				return errors.New("restore overwrites data and needs a confirmation, but stdin is not a terminal; pass -y with an explicit CLUSTER_NAME")
-			}
-			if f.pointInTime != "" && f.to == "" {
-				return errors.New("--point-in-time needs --to: a point-in-time restore always creates a new cluster")
 			}
 
 			return runRestore(cmd, opts, name, f)
@@ -103,7 +103,8 @@ func runRestore(cmd *cobra.Command, opts *GlobalOptions, cluster string, f resto
 
 	ctx := cmd.Context()
 
-	if _, err := c.In(k8s.DBClusterGVR).Get(ctx, cluster, metav1.GetOptions{}); err != nil {
+	src, err := c.In(k8s.DBClusterGVR).Get(ctx, cluster, metav1.GetOptions{})
+	if err != nil {
 		return c.FormatErr(err)
 	}
 
@@ -136,6 +137,12 @@ func runRestore(cmd *cobra.Command, opts *GlobalOptions, cluster string, f resto
 			return fmt.Errorf("backup %q is %s, not Succeeded; only finished backups can be restored", backupName, phase)
 		}
 		taken = k8s.StringField(backup, "status", "completeTime")
+		if taken == "-" {
+			if f.to != "" {
+				return fmt.Errorf("backup %q has no completeTime, so adbo cannot tell what time to clone from", backupName)
+			}
+			taken = "at an unknown time"
+		}
 	}
 	if f.to != "" {
 		_, err := c.In(k8s.DBClusterGVR).Get(ctx, f.to, metav1.GetOptions{})
@@ -157,16 +164,22 @@ func runRestore(cmd *cobra.Command, opts *GlobalOptions, cluster string, f resto
 			return errDeclined
 		}
 	}
+	copied := false
 
-	if f.to != "" {
+	if f.to != "" && k8s.StringField(src, "spec", "primarySpec", "adminUser", "passwordRef", "name") != "-" {
 		if err := copyPasswordSecret(ctx, c, cluster, f.to); err != nil {
 			return c.FormatErr(err)
 		}
+		copied = true
 	}
 	created, err := c.In(k8s.RestoreGVR).Create(ctx, newRestore(c.Namespace, cluster, backupName, f.to, taken), metav1.CreateOptions{})
 	if err != nil {
+		if copied {
+			_ = c.Typed.CoreV1().Secrets(c.Namespace).Delete(ctx, "db-pw-"+f.to, metav1.DeleteOptions{})
+		}
 		return c.FormatErr(err)
 	}
+
 	result := created
 	target := cluster
 	if f.to != "" {
@@ -236,7 +249,7 @@ func waitForRestore(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, nam
 	var failed *wait.FailedError
 	switch {
 	case err == nil:
-		if _, err := waitForClusterReady(cmd, opts, c, cluster); err != nil {
+		if _, err := waitForClusterReady(ctx, cmd, opts, c, cluster); err != nil {
 			return nil, err
 		}
 		return last, nil
@@ -250,18 +263,22 @@ func waitForRestore(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, nam
 
 }
 
-func waitForClusterReady(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, cluster string) (*unstructured.Unstructured, error) {
+func waitForClusterReady(ctx context.Context, cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, cluster string) (*unstructured.Unstructured, error) {
 	errOut := cmd.ErrOrStderr()
 	fmt.Fprintf(errOut, "Waiting for cluster %q to be ready...\n", cluster)
 
-	ctx, cancel := opts.WithTimeout(cmd.Context())
-	defer cancel()
-
 	last, err := wait.ForCondition(ctx, c, k8s.DBClusterGVR, cluster, func(db *unstructured.Unstructured) (bool, error) {
+		if p := wait.Phase(db); strings.HasSuffix(p, "Failed") {
+			return false, &wait.FailedError{Name: db.GetName(), Phase: p, Reason: wait.Reason(db)}
+		}
 		return wait.Phase(db) == scaleReadyPhase, nil
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
 		return nil, fmt.Errorf("cluster %q was not ready within %s (last phase %q): %w", cluster, opts.Timeout, wait.Phase(last), err)
+	}
+	var failed *wait.FailedError
+	if errors.As(err, &failed) {
+		return nil, fmt.Errorf("cluster %s failed after the restore (phase %s): %s", failed.Name, failed.Phase, failed.Reason)
 	}
 	if err != nil {
 		return nil, c.FormatErr(err)
