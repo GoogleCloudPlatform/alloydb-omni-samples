@@ -310,6 +310,29 @@ func TestEditTUIAddsRemovesAndRestoresFields(t *testing.T) {
 	}
 }
 
+func TestEditTUIAddStartsNextToTheSelectedField(t *testing.T) {
+	d := newTUI(t, readyDBCluster(), &stubBackend{})
+	if err := d.m.session.add("primarySpec.parameters.pgaudit.log", "all"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ field, want string }{
+		{"max_connections", "primarySpec.parameters."},
+		// A dotted key: the prefix is its map, not part of the key.
+		{"pgaudit.log", "primarySpec.parameters."},
+		// Fields can't be added inside list items, so start empty.
+		{"disks[DataDisk].size", ""},
+		{"databaseVersion", ""},
+	} {
+		d.find(tc.field)
+		d.typeText("+")
+		if got := d.m.input.Value(); got != tc.want {
+			t.Errorf("+ on %s prefills %q, want %q", tc.field, got, tc.want)
+		}
+		d.press(tea.KeyEsc)
+		d.press(tea.KeyEsc) // clear the filter
+	}
+}
+
 func TestEditTUIEditsTheYAMLInEditor(t *testing.T) {
 	b := &stubBackend{}
 	d := newTUI(t, readyDBCluster(), b)

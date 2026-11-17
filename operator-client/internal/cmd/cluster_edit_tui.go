@@ -308,9 +308,8 @@ func (m *editModel) specKey(key string) tea.Cmd {
 	switch key {
 	case "+", "n":
 		prefill := ""
-		if row, ok := m.selected(); ok && len(row.path) > 1 {
-			// Start next to the selected field: primarySpec.parameters.
-			prefill = row.label[:strings.LastIndex(row.label, ".")+1]
+		if row, ok := m.selected(); ok {
+			prefill = addPrefix(row.path)
 		}
 		m.startInput(modeAdd, prefill)
 		return nil
@@ -363,6 +362,24 @@ func (m *editModel) specKey(key string) tea.Cmd {
 		m.startInput(modeEdit, inputValue(row.value))
 	}
 	return nil
+}
+
+// addPrefix is what + starts with: the map that holds the field at p, in
+// the syntax add takes, such as primarySpec.parameters. for a parameter.
+// Fields can't be added inside list items, so those start empty.
+func addPrefix(p fieldPath) string {
+	if len(p) < 2 {
+		return ""
+	}
+	var b strings.Builder
+	for _, e := range p[:len(p)-1] {
+		k, ok := e.(string)
+		if !ok {
+			return ""
+		}
+		b.WriteString(keyLabel(k, b.Len() == 0))
+	}
+	return b.String() + "."
 }
 
 func (m *editModel) startInput(mode tuiMode, value string) {
