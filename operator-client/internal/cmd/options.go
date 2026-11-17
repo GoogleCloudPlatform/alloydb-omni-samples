@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -83,6 +84,11 @@ func (o *GlobalOptions) AddWaitFlags(cmd *cobra.Command) *WaitFlags {
 	cmd.MarkFlagsMutuallyExclusive("wait", "no-wait")
 	return w
 }
+
+// errDeclined ends a command the user did not confirm. It is an error, not a
+// quiet return, so a script that forgot -y gets a non-zero exit instead of
+// reading an aborted change as success.
+var errDeclined = errors.New("cancelled")
 
 // Confirm asks "prompt [y/N] " unless -y was set.
 // The question goes to cmd's error stream so piped stdout stays clean.
