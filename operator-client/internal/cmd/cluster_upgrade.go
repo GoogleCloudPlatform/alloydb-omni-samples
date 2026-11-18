@@ -22,6 +22,8 @@ type version [3]int
 var (
 	dbVersionPath     = []string{"spec", "databaseVersion"}
 	agentsVersionPath = []string{"spec", "controlPlaneAgentsVersion"}
+	dbRunningPath     = []string{"status", "primary", "currentDatabaseVersion"}
+	agentsRunningPath = []string{"status", "primary", "currentControlPlaneAgentsVersion"}
 )
 
 type versionFlags struct {
@@ -30,22 +32,25 @@ type versionFlags struct {
 }
 
 func planVersionChange(db *unstructured.Unstructured, f versionFlags, dir int) ([]change, map[string]any, error) {
-	if running := k8s.StringField(db, "status", "primary", "currentDatabaseVersion"); running != "-" && running != k8s.StringField(db, dbVersionPath...) {
-		return nil, nil, fmt.Errorf("cluster %q is already changing version (running %s, spec %s); wait for it to finish", db.GetName(), running, k8s.StringField(db, dbVersionPath...))
-
+	fields := []struct {
+		flag, field, value string
+		path, running      []string
+	}{
+		{"--version", "version", f.version, dbVersionPath, dbRunningPath},
+		{"--agents-version", "agents", f.agentsVersion, agentsVersionPath, agentsRunningPath},
 	}
-	if running := k8s.StringField(db, "status", "primary", "currentControlPlaneAgentsVersion"); running != "-" && running != k8s.StringField(db, agentsVersionPath...) {
-		return nil, nil, fmt.Errorf("cluster %q is already changing agents version (running %s, spec %s); wait for it to finish", db.GetName(), running, k8s.StringField(db, agentsVersionPath...))
+	// A change is in progress when spec asks for a version the cluster is not
+	// running yet. A spec that omits the field (samples/v1_dbcluster.yaml,
+	// `cluster create`) leaves the choice to the operator, so it is not one.
+	for _, t := range fields {
+		spec, running := k8s.StringField(db, t.path...), k8s.StringField(db, t.running...)
+		if spec != "-" && running != "-" && spec != running {
+			return nil, nil, fmt.Errorf("cluster %q is already changing its %s (running %s, spec %s); wait for it to finish", db.GetName(), t.flag[2:], running, spec)
+		}
 	}
 	var changes []change
 	patch := map[string]any{"metadata": map[string]any{"resourceVersion": db.GetResourceVersion()}}
-	for _, t := range []struct {
-		flag, field, value string
-		path               []string
-	}{
-		{"--version", "version", f.version, dbVersionPath},
-		{"--agents-version", "agents", f.agentsVersion, agentsVersionPath},
-	} {
+	for _, t := range fields {
 		if t.value == "" {
 			continue
 		}
@@ -54,6 +59,9 @@ func planVersionChange(db *unstructured.Unstructured, f versionFlags, dir int) (
 			return nil, nil, err
 		}
 		curStr := k8s.StringField(db, t.path...)
+		if curStr == "-" {
+			curStr = k8s.StringField(db, t.running...) // spec omits it; use what is running
+		}
 		cur, err := parseVersion("current "+t.field, curStr)
 		if err != nil {
 			return nil, nil, fmt.Errorf("cannot read the cluster's current %s (%q); refusing to change it", t.field, curStr)
@@ -176,7 +184,7 @@ func runVersionChange(cmd *cobra.Command, opts *GlobalOptions, name string, f ve
 		return c.FormatErr(err)
 	}
 	if f.wait {
-		if updated, err = waitForVersion(cmd, opts, c, name, patch); err != nil {
+		if updated, err = waitForVersion(cmd, opts, c, name, updated.GetGeneration(), patch); err != nil {
 			return err
 		}
 	}
@@ -264,25 +272,61 @@ func newClusterDowngradeCommand(opts *GlobalOptions) *cobra.Command {
 	return cmd
 }
 
-func versionDone(patch map[string]any) wait.Condition {
+// versionDone is done when the operator has handled this patch (generation),
+// is no longer upgrading, runs the requested versions and is Ready.
+//
+// During a low-downtime upgrade the operator upgrades the standby, switches
+// over, then upgrades the old primary with DBCUpgradeInProgress still True.
+// Right after the switchover status.primary already reports the new version
+// and the phase is Ready, so that condition is what says it is really done.
+func versionDone(generation int64, patch map[string]any) wait.Condition {
 	return func(db *unstructured.Unstructured) (bool, error) {
-		if want, found, _ := unstructured.NestedString(patch, dbVersionPath...); found && k8s.StringField(db, "status", "primary", "currentDatabaseVersion") != want {
+		phase := wait.Phase(db)
+		if strings.HasSuffix(phase, "Failed") {
+			return false, &wait.FailedError{Name: db.GetName(), Phase: phase, Reason: wait.Reason(db)}
+		}
+		if conditionReason(db, "DBCUpgradeInProgress") == "UpgradeFailed" {
+			return false, &wait.FailedError{Name: db.GetName(), Phase: "UpgradeFailed", Reason: wait.Reason(db)}
+		}
+		if og, found, _ := unstructured.NestedInt64(db.Object, "status", "observedGeneration"); found && og < generation {
 			return false, nil
 		}
-		if want, found, _ := unstructured.NestedString(patch, agentsVersionPath...); found && k8s.StringField(db, "status", "primary", "currentControlPlaneAgentsVersion") != want {
+		if k8s.ConditionStatus(db, "DBCUpgradeInProgress") == "True" {
 			return false, nil
 		}
-		return wait.Phase(db) == scaleReadyPhase, nil
+		if want, found, _ := unstructured.NestedString(patch, dbVersionPath...); found && k8s.StringField(db, dbRunningPath...) != want {
+			return false, nil
+		}
+		if want, found, _ := unstructured.NestedString(patch, agentsVersionPath...); found && k8s.StringField(db, agentsRunningPath...) != want {
+			return false, nil
+		}
+		return phase == scaleReadyPhase, nil
 	}
 }
 
-func waitForVersion(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, name string, patch map[string]any) (*unstructured.Unstructured, error) {
+// conditionReason returns the reason on condition condType, or "".
+func conditionReason(obj *unstructured.Unstructured, condType string) string {
+	conds, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	for _, c := range conds {
+		if m, ok := c.(map[string]any); ok && m["type"] == condType {
+			r, _ := m["reason"].(string)
+			return r
+		}
+	}
+	return ""
+}
+
+func waitForVersion(cmd *cobra.Command, opts *GlobalOptions, c *k8s.Clients, name string, generation int64, patch map[string]any) (*unstructured.Unstructured, error) {
 	fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for cluster %q to finish...\n", name)
 
 	ctx, cancel := opts.WithTimeout(cmd.Context())
 	defer cancel()
 
-	last, err := wait.ForCondition(ctx, c, k8s.DBClusterGVR, name, versionDone(patch))
+	last, err := wait.ForCondition(ctx, c, k8s.DBClusterGVR, name, versionDone(generation, patch))
+	var failed *wait.FailedError
+	if errors.As(err, &failed) {
+		return nil, fmt.Errorf("cluster %s failed to change version (%s): %s", failed.Name, failed.Phase, failed.Reason)
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return nil, fmt.Errorf("cluster %q did not finish within %s; the change is applied and "+"the operator is still working on it, check `adbo cluster list`: %w", name, opts.Timeout, err)
 	}

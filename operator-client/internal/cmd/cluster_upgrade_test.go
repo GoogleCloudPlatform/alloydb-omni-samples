@@ -17,6 +17,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/k8s"
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/output"
+	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/wait"
 )
 
 // versionedCluster is a ready DBCluster running database 16.8.0 and
@@ -130,8 +131,8 @@ func TestPlanVersionChangeRejects(t *testing.T) {
 		f    versionFlags
 		want string
 	}{
-		{"database change in progress", changingDB, versionFlags{version: "16.10.0"}, "already changing version"},
-		{"agents change in progress", changingAgents, versionFlags{version: "16.9.0"}, "already changing agents version"},
+		{"database change in progress", changingDB, versionFlags{version: "16.10.0"}, "already changing its version"},
+		{"agents change in progress", changingAgents, versionFlags{version: "16.9.0"}, "already changing its agents-version"},
 		{"bad flag", versionedCluster("my-db"), versionFlags{version: "17"}, "x.y.z"},
 		{"unreadable current version", unreadable, versionFlags{version: "16.9.0"}, "cannot read the cluster's current version"},
 	}
@@ -324,7 +325,7 @@ func TestVersionDone(t *testing.T) {
 			_ = unstructured.SetNestedField(db.Object, tc.db, "status", "primary", "currentDatabaseVersion")
 			_ = unstructured.SetNestedField(db.Object, tc.ag, "status", "primary", "currentControlPlaneAgentsVersion")
 			_ = unstructured.SetNestedField(db.Object, tc.phase, "status", "phase")
-			done, err := versionDone(patch)(db)
+			done, err := versionDone(0, patch)(db)
 			if err != nil || done != tc.done {
 				t.Fatalf("done=%v err=%v, want done=%v", done, err, tc.done)
 			}
@@ -448,5 +449,107 @@ func TestClusterDowngradeNoTerminal(t *testing.T) {
 	cmd.SetArgs([]string{"my-db", "--version", "16.7.0"})
 	if err := cmd.ExecuteContext(t.Context()); err == nil || !strings.Contains(err.Error(), "not a terminal") {
 		t.Fatalf("err = %v, want a not-a-terminal error", err)
+	}
+}
+
+func TestPlanVersionChangeSpecWithoutAgentsVersion(t *testing.T) {
+	// samples/v1_dbcluster.yaml and `cluster create` leave the agents version
+	// to the operator: spec omits it while status reports what runs.
+	db := versionedCluster("my-db")
+	unstructured.RemoveNestedField(db.Object, agentsVersionPath...)
+
+	changes, patch, err := planVersionChange(db, versionFlags{version: "16.9.0"}, 1)
+	if err != nil {
+		t.Fatalf("a spec without an agents version must not look like a change in progress: %v", err)
+	}
+	if len(changes) != 1 || changes[0].field != "version" {
+		t.Errorf("changes = %v", changes)
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(patch, agentsVersionPath...); found {
+		t.Error("--version alone must not pin the agents version")
+	}
+
+	// --agents-version falls back to the running version as the current one.
+	changes, _, err = planVersionChange(db, versionFlags{agentsVersion: "1.6.0"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0] != (change{"agents", "1.5.0", "1.6.0"}) {
+		t.Errorf("changes = %v, want agents 1.5.0 -> 1.6.0 from status", changes)
+	}
+	if _, _, err := planVersionChange(db, versionFlags{agentsVersion: "1.4.0"}, 1); err == nil || !strings.Contains(err.Error(), "adbo cluster downgrade") {
+		t.Errorf("direction check must use the running version too, got %v", err)
+	}
+}
+
+func TestVersionDoneLowDowntimeAndFailures(t *testing.T) {
+	_, patch, err := planVersionChange(versionedCluster("my-db"), versionFlags{version: "16.9.0"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// applied: the operator has seen generation 2 and runs 16.9.0, Ready.
+	applied := func() *unstructured.Unstructured {
+		db := versionedCluster("my-db")
+		_ = unstructured.SetNestedField(db.Object, "16.9.0", dbRunningPath...)
+		_ = unstructured.SetNestedField(db.Object, int64(2), "status", "observedGeneration")
+		return db
+	}
+	cond := func(db *unstructured.Unstructured, typ, status, reason string) {
+		conds, _, _ := unstructured.NestedSlice(db.Object, "status", "conditions")
+		conds = append(conds, map[string]any{"type": typ, "status": status, "reason": reason})
+		_ = unstructured.SetNestedSlice(db.Object, conds, "status", "conditions")
+	}
+	tests := []struct {
+		name    string
+		mutate  func(db *unstructured.Unstructured)
+		done    bool
+		failure bool
+	}{
+		{"finished", func(*unstructured.Unstructured) {}, true, false},
+		{"operator has not seen the patch", func(db *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(db.Object, int64(1), "status", "observedGeneration")
+		}, false, false},
+		{"switched over, old primary still upgrading", func(db *unstructured.Unstructured) {
+			cond(db, "DBCUpgradeInProgress", "True", "UpgradeInProgress")
+		}, false, false},
+		{"upgrade condition cleared", func(db *unstructured.Unstructured) {
+			cond(db, "DBCUpgradeInProgress", "False", "UpgradeComplete")
+		}, true, false},
+		{"upgrade failed", func(db *unstructured.Unstructured) {
+			cond(db, "DBCUpgradeInProgress", "False", "UpgradeFailed")
+		}, false, true},
+		{"failed phase", func(db *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(db.Object, "DBClusterReconcileFailed", "status", "phase")
+		}, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := applied()
+			tc.mutate(db)
+			done, err := versionDone(2, patch)(db)
+			var failed *wait.FailedError
+			if done != tc.done || errors.As(err, &failed) != tc.failure {
+				t.Fatalf("done=%v err=%v, want done=%v failure=%v", done, err, tc.done, tc.failure)
+			}
+		})
+	}
+}
+
+func TestClusterUpgradeWaitFailsFast(t *testing.T) {
+	db := versionedCluster("my-db")
+	cond := []any{
+		map[string]any{"type": "HAReady", "status": "True"},
+		map[string]any{"type": "DBCUpgradeInProgress", "status": "False", "reason": "UpgradeFailed", "message": "image pull failed"},
+	}
+	_ = unstructured.SetNestedSlice(db.Object, cond, "status", "conditions")
+	opts, _ := waitOpts(db)
+	var out, errOut bytes.Buffer
+	start := time.Now()
+	err := runVersionChange(scaleCmd(&out, &errOut, ""), opts, "my-db", versionFlags{version: "16.9.0", wait: true}, 1)
+	if err == nil || !strings.Contains(err.Error(), "failed to change version") {
+		t.Fatalf("err = %v, want a fail-fast upgrade error", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("took %s; UpgradeFailed should stop the wait at once", time.Since(start))
 	}
 }
