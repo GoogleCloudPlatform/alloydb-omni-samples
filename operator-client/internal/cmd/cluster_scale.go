@@ -282,7 +282,6 @@ func diskSize(obj map[string]any, base []string) string {
 // the prompt the API server rejects it with a Conflict instead of letting
 // the patch overwrite that edit.
 func planScale(db *unstructured.Unstructured, f scaleFlags) ([]change, map[string]any, error) {
-	const maxStandbys = 5
 	var changes []change
 	patch := map[string]any{"metadata": map[string]any{"resourceVersion": db.GetResourceVersion()}}
 
@@ -327,8 +326,8 @@ func planScale(db *unstructured.Unstructured, f scaleFlags) ([]change, map[strin
 	}
 
 	if f.standbysSet {
-		if f.standbys < 0 || f.standbys > maxStandbys {
-			return nil, nil, fmt.Errorf("--standbys must be between 0 and %d", maxStandbys)
+		if err := checkStandbys(int64(f.standbys)); err != nil {
+			return nil, nil, fmt.Errorf("--standbys: %w", err)
 		}
 		// An unset count means no standbys, so `--standbys 0` there is a no-op.
 		cur := int64(0)
@@ -389,11 +388,11 @@ func planDisk(db *unstructured.Unstructured, patch map[string]any, size string) 
 			// Without a current size we cannot enforce grow-only, so do not guess.
 			return nil, fmt.Errorf("current %s size %q could not be read; refusing to change it", dataDisk, cur)
 		}
-		switch want.Cmp(have) {
-		case 0:
+		if err := checkDiskGrow(dataDisk, have, want); err != nil {
+			return nil, fmt.Errorf("--disk: %w", err)
+		}
+		if want.Cmp(have) == 0 {
 			return nil, nil
-		case -1:
-			return nil, fmt.Errorf("--disk %s is smaller than the current %s: disks can grow but not shrink", want.String(), cur)
 		}
 		m["size"] = want.String()
 		disks[i] = m
