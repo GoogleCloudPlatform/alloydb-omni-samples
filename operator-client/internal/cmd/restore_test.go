@@ -561,3 +561,53 @@ func TestWaitForClusterReadyUsesCallersDeadline(t *testing.T) {
 		t.Errorf("took %s; it should stop when the caller's 200ms runs out", time.Since(start))
 	}
 }
+
+func TestRestoreCloneUsesPasswordRefName(t *testing.T) {
+	// The source points at a custom Secret with its own key name.
+	db := dbCluster("default", "my-db", "DBClusterReady")
+	_ = unstructured.SetNestedField(db.Object, "my-db-admin", "spec", "primarySpec", "adminUser", "passwordRef", "name")
+	custom := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-db-admin", Namespace: "default"},
+		Data:       map[string][]byte{"password": []byte("s3cret")},
+	}
+	opts, _ := restoreOpts([]runtime.Object{db, testBackup("b1", "my-db", "Succeeded", "id-1")}, custom)
+	var out, errOut bytes.Buffer
+	if err := runRestore(restoreCmd(&out, &errOut, ""), opts, "my-db", restoreFlags{backup: "b1", to: "my-copy"}); err != nil {
+		t.Fatalf("custom passwordRef: %v", err)
+	}
+	c, _ := opts.Clients()
+	s, err := c.Typed.CoreV1().Secrets("default").Get(t.Context(), "db-pw-my-copy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(s.Data["my-copy"]) != "s3cret" {
+		t.Errorf("copied secret data = %v, want the custom secret's password under key my-copy", s.Data)
+	}
+}
+
+func TestRestoreCloneReusesExistingSecret(t *testing.T) {
+	// db-pw-my-copy is left over from an earlier attempt: refresh it, and do
+	// not delete it if this attempt fails too, since this run did not make it.
+	leftover := pwSecret("my-copy")
+	leftover.Data = map[string][]byte{"my-copy": []byte("old")}
+	opts, dyn := restoreOpts([]runtime.Object{
+		withPasswordRef(dbCluster("default", "my-db", "DBClusterReady")),
+		testBackup("b1", "my-db", "Succeeded", "id-1"),
+	}, pwSecret("my-db"), leftover)
+	dyn.PrependReactor("create", "restores", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("admission webhook said no")
+	})
+	var out, errOut bytes.Buffer
+	err := runRestore(restoreCmd(&out, &errOut, ""), opts, "my-db", restoreFlags{backup: "b1", to: "my-copy"})
+	if err == nil || !strings.Contains(err.Error(), "admission webhook said no") {
+		t.Fatalf("err = %v, want the Restore create error, not AlreadyExists", err)
+	}
+	c, _ := opts.Clients()
+	s, getErr := c.Typed.CoreV1().Secrets("default").Get(t.Context(), "db-pw-my-copy", metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatalf("a Secret this run did not create was deleted: %v", getErr)
+	}
+	if string(s.Data["my-copy"]) != "s3cret" {
+		t.Errorf("existing secret not refreshed: %v", s.Data)
+	}
+}

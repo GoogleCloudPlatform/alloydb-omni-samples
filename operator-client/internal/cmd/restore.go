@@ -164,18 +164,19 @@ func runRestore(cmd *cobra.Command, opts *GlobalOptions, cluster string, f resto
 			return errDeclined
 		}
 	}
-	copied := false
-
-	if f.to != "" && k8s.StringField(src, "spec", "primarySpec", "adminUser", "passwordRef", "name") != "-" {
-		if err := copyPasswordSecret(ctx, c, cluster, f.to); err != nil {
+	// createdSecret is true only when this run made db-pw-<to>, so a failed
+	// Restore never deletes a Secret that was already there.
+	createdSecret := false
+	if pwRef := k8s.StringField(src, "spec", "primarySpec", "adminUser", "passwordRef", "name"); f.to != "" && pwRef != "-" {
+		createdSecret, err = copyPasswordSecret(ctx, c, pwRef, cluster, f.to)
+		if err != nil {
 			return c.FormatErr(err)
 		}
-		copied = true
 	}
 	created, err := c.In(k8s.RestoreGVR).Create(ctx, newRestore(c.Namespace, cluster, backupName, f.to, taken), metav1.CreateOptions{})
 	if err != nil {
-		if copied {
-			_ = c.Typed.CoreV1().Secrets(c.Namespace).Delete(ctx, "db-pw-"+f.to, metav1.DeleteOptions{})
+		if createdSecret {
+			_ = c.Typed.CoreV1().Secrets(c.Namespace).Delete(ctx, k8s.AdminSecretName(f.to), metav1.DeleteOptions{})
 		}
 		return c.FormatErr(err)
 	}
@@ -301,26 +302,41 @@ func findBackupByID(ctx context.Context, c *k8s.Clients, id string) (*unstructur
 	return nil, nil
 }
 
-func copyPasswordSecret(ctx context.Context, c *k8s.Clients, from, to string) error {
-	src, err := c.Typed.CoreV1().Secrets(c.Namespace).Get(ctx, "db-pw-"+from, metav1.GetOptions{})
+// copyPasswordSecret copies the source cluster's admin password, from the
+// Secret its passwordRef names, into db-pw-<to> under key <to>, the name and
+// key a new cluster reads. It reports whether it created the Secret; an
+// existing one (left by an earlier attempt) is updated instead.
+func copyPasswordSecret(ctx context.Context, c *k8s.Clients, srcSecret, from, to string) (bool, error) {
+	secrets := c.Typed.CoreV1().Secrets(c.Namespace)
+	src, err := secrets.Get(ctx, srcSecret, metav1.GetOptions{})
 	if err != nil {
-		return err
+		return false, err
 	}
 	password, ok := src.Data[from]
+	if !ok && len(src.Data) == 1 {
+		// A custom Secret may use its own key; with only one there is no doubt.
+		for _, v := range src.Data {
+			password, ok = v, true
+		}
+	}
 	if !ok {
-		return fmt.Errorf("secret db-pw-%s has no key %q", from, from)
+		return false, fmt.Errorf("secret %s has no key %q; cannot tell which value is the password", srcSecret, from)
 	}
-	dst := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "db-pw-" + to,
-			Namespace: c.Namespace,
-		},
-		Data: map[string][]byte{
-			to: password,
-		},
+	data := map[string][]byte{to: password}
+	_, err = secrets.Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: k8s.AdminSecretName(to), Namespace: c.Namespace},
+		Data:       data,
+	}, metav1.CreateOptions{})
+	if !apierrors.IsAlreadyExists(err) {
+		return err == nil, err
 	}
-	_, err = c.Typed.CoreV1().Secrets(c.Namespace).Create(ctx, dst, metav1.CreateOptions{})
-	return err
+	existing, err := secrets.Get(ctx, k8s.AdminSecretName(to), metav1.GetOptions{})
+	if err != nil {
+		return false, err
+	}
+	existing.Data = data
+	_, err = secrets.Update(ctx, existing, metav1.UpdateOptions{})
+	return false, err
 }
 
 func normalizePointInTime(s string) (string, error) {
