@@ -39,28 +39,38 @@ func validateSpec(old, updated *unstructured.Unstructured) error {
 	newDisks, _, _ := unstructured.NestedSlice(updated.Object, disksPath...)
 	oldSizes := map[string]string{}
 	for _, d := range oldDisks {
-		if m, ok := d.(map[string]any); ok {
-			oldSizes[fmt.Sprint(m["name"])] = fmt.Sprint(m["size"])
+		if m, ok := d.(map[string]any); ok && diskField(m, "name") != "" {
+			oldSizes[diskField(m, "name")] = diskField(m, "size")
 		}
 	}
+	// seen tracks names separately from oldSizes so a disk listed twice
+	// cannot slip its second entry past the shrink check.
+	seen := map[string]bool{}
 	for _, d := range newDisks {
 		m, ok := d.(map[string]any)
 		if !ok {
-			continue
+			return fmt.Errorf("spec.primarySpec.resources.disks: every entry must be a disk with a name and size")
 		}
-		name := fmt.Sprint(m["name"])
-		size := fmt.Sprint(m["size"])
+		name, size := diskField(m, "name"), diskField(m, "size")
+		if name == "" {
+			return fmt.Errorf("spec.primarySpec.resources.disks: every disk needs a name")
+		}
+		if seen[name] {
+			return fmt.Errorf("disk %s is listed twice", name)
+		}
+		seen[name] = true
+		if size == "" {
+			return fmt.Errorf("disk %s needs a size", name)
+		}
 		was, existed := oldSizes[name]
 		if size != was {
 			if _, err := parseScaleQuantity("--disk", size); err != nil {
 				return fmt.Errorf("disk %s: %w", name, err)
 			}
-
 		}
-		if !existed {
+		if !existed || was == "" {
 			continue
 		}
-		delete(oldSizes, name)
 		before, err1 := resource.ParseQuantity(was)
 		after, err2 := resource.ParseQuantity(size)
 		if err1 == nil && err2 == nil {
@@ -70,7 +80,9 @@ func validateSpec(old, updated *unstructured.Unstructured) error {
 		}
 	}
 	for name := range oldSizes {
-		return fmt.Errorf("disk %s was removed; adbo does not remove disks from a cluster", name)
+		if !seen[name] {
+			return fmt.Errorf("disk %s was removed; adbo does not remove disks from a cluster", name)
+		}
 	}
 	return nil
 }
@@ -88,4 +100,14 @@ func checkDiskGrow(name string, before, after resource.Quantity) error {
 		return fmt.Errorf("disk %s: %s is smaller than the current %s; disks can grow but not shrink", name, after.String(), before.String())
 	}
 	return nil
+}
+
+// diskField reads a disk's name or size as text, or "" when it is missing or
+// null, so an omitted field is not mistaken for the text "<nil>".
+func diskField(disk map[string]any, key string) string {
+	v, ok := disk[key]
+	if !ok || v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }

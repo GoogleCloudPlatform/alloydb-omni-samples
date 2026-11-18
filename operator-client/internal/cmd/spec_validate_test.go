@@ -108,3 +108,60 @@ func TestValidateSpecNilUpdated(t *testing.T) {
 		t.Fatal("nil updated must be an error, not a panic")
 	}
 }
+
+func TestValidateSpecMalformedDisks(t *testing.T) {
+	disksPath := append(append([]string{}, resourcesPath...), "disks")
+	tests := []struct {
+		name  string
+		disks []any
+		want  string
+	}{
+		{"disk without a size", []any{
+			map[string]any{"name": "DataDisk", "size": "10Gi"},
+			map[string]any{"name": "LogDisk", "size": "5Gi"},
+			map[string]any{"name": "BackupDisk"},
+		}, "disk BackupDisk needs a size"},
+		{"size set to null", []any{
+			map[string]any{"name": "DataDisk", "size": nil},
+			map[string]any{"name": "LogDisk", "size": "5Gi"},
+		}, "disk DataDisk needs a size"},
+		{"disk without a name", []any{
+			map[string]any{"name": "DataDisk", "size": "10Gi"},
+			map[string]any{"name": "LogDisk", "size": "5Gi"},
+			map[string]any{"size": "20Gi"},
+		}, "every disk needs a name"},
+		{"duplicate hides a shrink", []any{
+			map[string]any{"name": "DataDisk", "size": "10Gi"},
+			map[string]any{"name": "DataDisk", "size": "1Gi"},
+			map[string]any{"name": "LogDisk", "size": "5Gi"},
+		}, "disk DataDisk is listed twice"},
+		{"not a disk", []any{"DataDisk"}, "every entry must be a disk"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			old := sizedCluster("my-db")
+			updated := old.DeepCopy()
+			_ = unstructured.SetNestedSlice(updated.Object, tc.disks, disksPath...)
+			err := validateSpec(old, updated)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), "<nil>") {
+				t.Errorf("error leaks <nil>: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateSpecOldDiskWithoutSize(t *testing.T) {
+	// An old disk with no recorded size cannot be shrunk-checked; a valid new
+	// size must still be accepted.
+	disksPath := append(append([]string{}, resourcesPath...), "disks")
+	old := sizedCluster("my-db")
+	_ = unstructured.SetNestedSlice(old.Object, []any{map[string]any{"name": "DataDisk"}}, disksPath...)
+	updated := old.DeepCopy()
+	_ = unstructured.SetNestedSlice(updated.Object, []any{map[string]any{"name": "DataDisk", "size": "20Gi"}}, disksPath...)
+	if err := validateSpec(old, updated); err != nil {
+		t.Fatalf("want valid, got %v", err)
+	}
+}
