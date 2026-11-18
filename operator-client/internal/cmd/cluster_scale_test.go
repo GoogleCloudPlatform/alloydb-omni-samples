@@ -500,3 +500,27 @@ func TestClusterScaleNoWaitFlag(t *testing.T) {
 		t.Error("--wait and --no-wait together should fail")
 	}
 }
+
+func TestClusterScalePromptSaysWhetherClusterGoesDown(t *testing.T) {
+	// No standby: the restart takes the cluster down, so say so.
+	opts := fakeOpts(output.OutputTable, sizedCluster("my-db"))
+	var out, errOut bytes.Buffer
+	if err := runClusterScale(scaleCmd(&out, &errOut, "y\n"), opts, "my-db", scaleFlags{cpu: "4", standbys: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), "unavailable until it comes back") {
+		t.Errorf("no standby: prompt should warn about downtime:\n%s", errOut.String())
+	}
+
+	// Ready standby: low-downtime switchover, so no outage warning.
+	db := sizedCluster("my-db")
+	_ = unstructured.SetNestedField(db.Object, int64(1), standbysPath...)
+	opts = fakeOpts(output.OutputTable, db)
+	errOut.Reset()
+	if err := runClusterScale(scaleCmd(&out, &errOut, "y\n"), opts, "my-db", scaleFlags{cpu: "4", standbys: -1}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut.String(), "low-downtime switchover") || strings.Contains(errOut.String(), "unavailable") {
+		t.Errorf("ready standby: prompt should mention the switchover, not an outage:\n%s", errOut.String())
+	}
+}

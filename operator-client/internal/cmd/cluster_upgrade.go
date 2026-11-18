@@ -10,11 +10,9 @@ import (
 
 	"context"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -264,14 +262,6 @@ func newClusterDowngradeCommand(opts *GlobalOptions) *cobra.Command {
 	cmd.MarkFlagsOneRequired("version", "agents-version")
 	waitFlags = opts.AddWaitFlags(cmd)
 	return cmd
-}
-
-func isInteractive(cmd *cobra.Command) bool {
-	f, ok := cmd.InOrStdin().(*os.File)
-	if !ok {
-		return true
-	}
-	return term.IsTerminal(int(f.Fd()))
 }
 
 func versionDone(patch map[string]any) wait.Condition {
