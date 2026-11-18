@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"os"
 	"strings"
 	"time"
 
@@ -348,12 +346,4 @@ func normalizePointInTime(s string) (string, error) {
 		return "", fmt.Errorf("--point-in-time %q is not a valid time; use RFC 3339 with a timezone, e.g. 2026-11-16T10:00:00-05:00 or 2026-11-16T15:00:00Z", s)
 	}
 	return t.UTC().Format(time.RFC3339), nil
-}
-
-func isInteractive(cmd *cobra.Command) bool {
-	f, ok := cmd.InOrStdin().(*os.File)
-	if !ok {
-		return true
-	}
-	return term.IsTerminal(int(f.Fd()))
 }

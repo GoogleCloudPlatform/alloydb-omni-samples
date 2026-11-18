@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/config"
@@ -89,6 +91,17 @@ func (o *GlobalOptions) AddWaitFlags(cmd *cobra.Command) *WaitFlags {
 // quiet return, so a script that forgot -y gets a non-zero exit instead of
 // reading an aborted change as success.
 var errDeclined = errors.New("cancelled")
+
+// isInteractive reports whether stdin is a terminal, so a command that needs a
+// confirmation can fail fast instead of reading EOF as "no". Input that is not
+// a file (tests use a strings.Reader) counts as interactive.
+func isInteractive(cmd *cobra.Command) bool {
+	f, ok := cmd.InOrStdin().(*os.File)
+	if !ok {
+		return true
+	}
+	return term.IsTerminal(int(f.Fd()))
+}
 
 // Confirm asks "prompt [y/N] " unless -y was set.
 // The question goes to cmd's error stream so piped stdout stays clean.
