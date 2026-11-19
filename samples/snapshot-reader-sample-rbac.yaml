@@ -1,0 +1,157 @@
+# Sample RBAC for "dbcluster snapshot" with the default snapshot plan.
+#
+# Replace before applying:
+#   DBCLUSTER_NAMESPACE  namespace of the DBCluster to collect
+#   SNAPSHOT_USER        identity in the kubeconfig that runs the tool
+#                        (change the subject kind to Group or ServiceAccount if needed)
+#
+# If the AlloyDB Omni operator does not run in alloydb-omni-system, replace
+# that namespace as well.
+#
+# No cluster-wide permission is required. The tool also uses API discovery
+# (/api and /apis), which Kubernetes grants to every authenticated user by
+# default through the system:discovery ClusterRole.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alloydbomni-snapshot-reader
+  namespace: DBCLUSTER_NAMESPACE
+rules:
+  # Kubernetes resources that belong to the DBCluster, and their events.
+  # Secret values are redacted by the tool before anything is written to disk.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - persistentvolumeclaims
+      - secrets
+      - configmaps
+      - serviceaccounts
+      - services
+      - endpoints
+      - events
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources:
+      - statefulsets
+      - deployments
+    verbs: ["get", "list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+    verbs: ["get", "list"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources:
+      - endpointslices
+    verbs: ["get", "list"]
+  # Only needed if cert-manager is installed.
+  - apiGroups: ["cert-manager.io"]
+    resources:
+      - certificates
+      - certificaterequests
+      - issuers
+    verbs: ["get", "list"]
+  # AlloyDB Omni custom resources.
+  - apiGroups: ["alloydbomni.dbadmin.goog"]
+    resources:
+      - dbclusters
+      - dbclusterhealths
+      - dbinstances
+      - pgbouncers
+      - backupplans
+      - backups
+      - restores
+      - failovers
+      - switchovers
+      - replications
+      - observabilityconfigs
+      - sidecars
+      - tdeconfigs
+      - userdefinedauthentications
+      # Collected by releases after 0.1.2.
+      - majorversionupgrades
+    verbs: ["get", "list"]
+  - apiGroups: ["alloydbomni.internal.dbadmin.goog"]
+    resources:
+      - instances
+      - instancehealths
+      - backuprepositories
+      - instancebackupplans
+      - instancebackups
+      - instancerestores
+      - instanceswitchovers
+      - failovers
+      - instanceobservabilityconfigs
+      - instanceuserdefinedauthentications
+      - lrojobs
+      - replicationconfigs
+      - sidecars
+    verbs: ["get", "list"]
+  # Container logs of the database, backup repository and PgBouncer pods.
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs: ["get"]
+  # Reads postgresql.log, postgresql.internal, postgresql.conf and
+  # postgresql.conf.d from inside the database container.
+  - apiGroups: [""]
+    resources:
+      - pods/exec
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alloydbomni-snapshot-reader
+  namespace: DBCLUSTER_NAMESPACE
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alloydbomni-snapshot-reader
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: SNAPSHOT_USER
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alloydbomni-snapshot-reader
+  namespace: alloydb-omni-system
+rules:
+  # Operator pods and deployments, and their events.
+  - apiGroups: [""]
+    resources:
+      - pods
+      - events
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+    verbs: ["get", "list"]
+  # Only needed if cert-manager is installed.
+  - apiGroups: ["cert-manager.io"]
+    resources:
+      - certificates
+      - certificaterequests
+    verbs: ["get", "list"]
+  # Operator container logs.
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alloydbomni-snapshot-reader
+  namespace: alloydb-omni-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: alloydbomni-snapshot-reader
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: SNAPSHOT_USER
