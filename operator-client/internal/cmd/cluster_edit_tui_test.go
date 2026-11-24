@@ -159,10 +159,10 @@ func TestEditTUIChecksEachChangeWithTheServer(t *testing.T) {
 }
 
 func TestEditTUIShowsWhyTheServerRejectsAChange(t *testing.T) {
-	b := &stubBackend{dryRunErr: errors.New("spec.availability.numberOfStandbys: Invalid value: 9: must be less than or equal to 5")}
+	b := &stubBackend{dryRunErr: errors.New("spec.primarySpec.resources.cpu: Invalid value: 64: must be less than or equal to 32")}
 	d := newTUI(t, readyDBCluster(), b)
-	d.change("availability.numberOfStandbys", "9")
-	d.wantView("rejected", "must be less than or equal to 5")
+	d.change("primarySpec.resources.cpu", "64")
+	d.wantView("rejected", "must be less than or equal to 32")
 }
 
 func TestEditTUIIgnoresResultsOfOlderChecks(t *testing.T) {
@@ -491,5 +491,20 @@ func TestEditTUITruncateKeepsStylesIntact(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "\x1b[0m") {
 		t.Errorf("truncate dropped the reset sequence, so the style leaks: %q", got)
+	}
+}
+
+func TestEditTUIChecksTheSpecBeforeTheDryRun(t *testing.T) {
+	b := &stubBackend{}
+	d := newTUI(t, readyDBCluster(), b)
+	d.change("availability.numberOfStandbys", "9")
+	d.wantView("not valid", "standbys must be between 0 and 5")
+	if len(b.dryRuns) != 0 {
+		t.Errorf("sent %d dry runs, want 0: adbo already knows the spec is invalid", len(b.dryRuns))
+	}
+	d.typeText("a")
+	d.wantView("fix the error")
+	if len(b.applies) != 0 {
+		t.Fatal("an invalid spec must not be applied")
 	}
 }
