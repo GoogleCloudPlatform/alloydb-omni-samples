@@ -7,7 +7,9 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.6
+	github.com/gdamore/tcell/v2 v2.8.1
 	github.com/go-logr/logr v1.4.3
+	github.com/rivo/tview v0.42.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/term v0.48.0
@@ -34,6 +36,7 @@ require (
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
+	github.com/gdamore/encoding v1.0.1 // indirect
 	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-openapi/jsonreference v1.0.0 // indirect
