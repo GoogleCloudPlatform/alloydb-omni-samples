@@ -137,6 +137,27 @@ func copyReplicationSecret(ctx context.Context, src, dst *k8s.Clients, up *unstr
 	return copyName, nil
 }
 
+// downstreamMismatch reports the first field where an existing downstream
+// differs from the one create wants, or "" if it can be reused.
+func downstreamMismatch(existing, want *unstructured.Unstructured) string {
+	for _, path := range [][]string{
+		{"spec", "dbcluster", "name"},
+		{"spec", "downstream", "host"},
+		{"spec", "downstream", "username"},
+		{"spec", "downstream", "replicationSlotName"},
+	} {
+		if got, w := k8s.StringField(existing, path...), k8s.StringField(want, path...); got != w {
+			return fmt.Sprintf("%s is %q, want %q", strings.Join(path, "."), got, w)
+		}
+	}
+	gotPort, _, _ := unstructured.NestedInt64(existing.Object, "spec", "downstream", "port")
+	wantPort, _, _ := unstructured.NestedInt64(want.Object, "spec", "downstream", "port")
+	if gotPort != wantPort {
+		return fmt.Sprintf("spec.downstream.port is %d, want %d", gotPort, wantPort)
+	}
+	return ""
+}
+
 func downstreamReady(down *unstructured.Unstructured) (bool, error) {
 	return k8s.ConditionStatus(down, "Ready") == "True" && k8s.ConditionStatus(down, "Healthy") == "True", nil
 }
@@ -172,7 +193,17 @@ func runReplicateCreate(cmd *cobra.Command, opts *GlobalOptions, source, target 
 	defer cancel()
 
 	up := newUpstream(src.Namespace, source, target)
-	if _, err := src.In(k8s.ReplicationGVR).Create(ctx, up, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	if _, err := src.In(k8s.ReplicationGVR).Create(ctx, up, metav1.CreateOptions{}); apierrors.IsAlreadyExists(err) {
+		// Left from an earlier run. Reuse it only if it shares the same source,
+		// otherwise target would quietly copy from the wrong cluster.
+		existing, err := src.In(k8s.ReplicationGVR).Get(ctx, up.GetName(), metav1.GetOptions{})
+		if err != nil {
+			return src.FormatErr(err)
+		}
+		if got := k8s.StringField(existing, "spec", "dbcluster", "name"); got != source {
+			return fmt.Errorf("%s%s already replicates %q, not %q; run `adbo replicate delete %s` first", up.GetName(), k8s.Location(src.Namespace, src.Context), got, source, target)
+		}
+	} else if err != nil {
 		return src.FormatErr(err)
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for %q to be ready to share...\n", source)
@@ -193,6 +224,11 @@ func runReplicateCreate(cmd *cobra.Command, opts *GlobalOptions, source, target 
 	created, err := dst.In(k8s.ReplicationGVR).Create(ctx, down, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		created, err = dst.In(k8s.ReplicationGVR).Get(ctx, down.GetName(), metav1.GetOptions{})
+		if err == nil {
+			if diff := downstreamMismatch(created, down); diff != "" {
+				return fmt.Errorf("%s%s already exists but points elsewhere (%s); run `adbo replicate delete %s` first", down.GetName(), k8s.Location(dst.Namespace, dst.Context), diff, target)
+			}
+		}
 	}
 	if err != nil {
 		return dst.FormatErr(err)
@@ -348,29 +384,33 @@ func runReplicatePromote(cmd *cobra.Command, opts *GlobalOptions, target string,
 		return fmt.Errorf("no replication into %q found: %s does not exist%s", target, downName, k8s.Location(dst.Namespace, dst.Context))
 	}
 	out := cmd.OutOrStdout()
-	if k8s.StringField(down, "spec", "downstream", "control") == "promote" {
-		fmt.Fprintf(out, "Cluster %q is already promoted, nothing to do.\n", target)
-		return nil
-	}
-	prompt := fmt.Sprintf("Promote %q%s: it stops copying from the source (%s) and becomes a normal, writeable cluster.\n"+"Anything written to the source that has not arrived yet will not be copied. Continue?", target, k8s.Location(dst.Namespace, dst.Context), k8s.StringField(down, "spec", "downstream", "host"))
-	ok, err := opts.Confirm(cmd, prompt)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errDeclined
-	}
-	patch := map[string]any{
-		"metadata": map[string]any{"resourceVersion": down.GetResourceVersion()},
-		"spec":     map[string]any{"downstream": map[string]any{"control": "promote"}},
-	}
-	body, err := json.Marshal(patch)
-	if err != nil {
-		return err
-	}
-	promoted, err := dst.In(k8s.ReplicationGVR).Patch(ctx, downName, types.MergePatchType, body, metav1.PatchOptions{})
-	if err != nil {
-		return dst.FormatErr(err)
+	// An earlier promote may have used --no-wait or timed out, so an already
+	// promoted target skips the prompt and patch but still waits and cleans up.
+	alreadyPromoted := k8s.StringField(down, "spec", "downstream", "control") == "promote"
+	promoted := down
+	if alreadyPromoted {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Cluster %q is already promoted.\n", target)
+	} else {
+		prompt := fmt.Sprintf("Promote %q%s: it stops copying from the source (%s) and becomes a normal, writeable cluster.\n"+"Anything written to the source that has not arrived yet will not be copied. Continue?", target, k8s.Location(dst.Namespace, dst.Context), k8s.StringField(down, "spec", "downstream", "host"))
+		ok, err := opts.Confirm(cmd, prompt)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errDeclined
+		}
+		patch := map[string]any{
+			"metadata": map[string]any{"resourceVersion": down.GetResourceVersion()},
+			"spec":     map[string]any{"downstream": map[string]any{"control": "promote"}},
+		}
+		body, err := json.Marshal(patch)
+		if err != nil {
+			return err
+		}
+		promoted, err = dst.In(k8s.ReplicationGVR).Patch(ctx, downName, types.MergePatchType, body, metav1.PatchOptions{})
+		if err != nil {
+			return dst.FormatErr(err)
+		}
 	}
 	// Removing the source side before the promote finishes could cut the
 	// target off mid-promote, so --cleanup-upstream always waits.
@@ -379,7 +419,9 @@ func runReplicatePromote(cmd *cobra.Command, opts *GlobalOptions, target string,
 		waitCtx, cancel := opts.WithTimeout(ctx)
 		defer cancel()
 		fmt.Fprintf(cmd.ErrOrStderr(), "Waiting for %q to finish promoting...\n", target)
-		if _, err := wait.ForCondition(waitCtx, dst, k8s.ReplicationGVR, downName, promoteDone(promoted.GetGeneration())); err != nil {
+		// Keep the object the wait returns so -o json/yaml shows the finished state.
+		promoted, err = wait.ForCondition(waitCtx, dst, k8s.ReplicationGVR, downName, promoteDone(promoted.GetGeneration()))
+		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				return fmt.Errorf("promote of %q is applied but not finished after %s; check `adbo replicate status %s`: %w", target, opts.Timeout, target, err)
 			}
@@ -403,7 +445,7 @@ func runReplicatePromote(cmd *cobra.Command, opts *GlobalOptions, target string,
 		return output.Print(out, opts.Output, output.Table{}, promoted.Object)
 	}
 	verb := "Promoting"
-	if waited {
+	if waited || alreadyPromoted {
 		verb = "Promoted"
 	}
 	fmt.Fprintf(out, "%s %q%s; it is now a separate, writeable cluster.\n", verb, target, k8s.Location(dst.Namespace, dst.Context))
@@ -474,7 +516,11 @@ func runReplicateDelete(cmd *cobra.Command, opts *GlobalOptions, target string, 
 	}
 	var removed []string
 	remove := func(c *k8s.Clients, what, name string, del func() error) error {
-		if err := del(); err != nil && !apierrors.IsNotFound(err) {
+		err := del()
+		if apierrors.IsNotFound(err) {
+			return nil // already gone; don't claim we removed it
+		}
+		if err != nil {
 			return fmt.Errorf("removing %s %s: %w", what, name, c.FormatErr(err))
 		}
 		removed = append(removed, what+" "+name)

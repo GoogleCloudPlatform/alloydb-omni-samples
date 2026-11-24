@@ -251,6 +251,55 @@ func TestReplicateCreateAcrossClusters(t *testing.T) {
 	}
 }
 
+func TestReplicateCreateRejectsUpstreamFromOtherSource(t *testing.T) {
+	src := newFakeSide("us", "prod", []runtime.Object{dbCluster("prod", "my-db", "DBClusterReady")}, repSecret())
+	dst := newFakeSide("eu", "dr", []runtime.Object{dbCluster("dr", "my-copy", "DBClusterReady")})
+	seedReplication(t, src, newUpstream("prod", "other-db", "my-copy"))
+	opts := replicateOpts(t, src, dst)
+	opts.Yes = true
+	var out, errOut bytes.Buffer
+	err := runReplicateCreate(scaleCmd(&out, &errOut, ""), opts, "my-db", "my-copy", usToEU)
+	if err == nil || !strings.Contains(err.Error(), `already replicates "other-db", not "my-db"`) {
+		t.Fatalf("err = %v", err)
+	}
+	if replicationExists(t, dst, "dr", "my-copy-downstream") {
+		t.Error("created a downstream wired to the wrong source")
+	}
+}
+
+func TestReplicateCreateRejectsMismatchedDownstream(t *testing.T) {
+	src := newFakeSide("us", "prod", []runtime.Object{dbCluster("prod", "my-db", "DBClusterReady")}, repSecret())
+	dst := newFakeSide("eu", "dr", []runtime.Object{dbCluster("dr", "my-copy", "DBClusterReady")})
+	stale := newUpstream("prod", "my-db", "my-copy")
+	publishUpstream(stale)
+	_ = unstructured.SetNestedField(stale.Object, "10.9.9.9", "status", "upstream", "host")
+	seedReplication(t, dst, newDownstream("dr", "my-copy", "my-copy-replication-pw", stale))
+	opts := replicateOpts(t, src, dst)
+	opts.Yes = true
+	playOperator(t, src, "prod", "my-copy-upstream", publishUpstream)
+	var out, errOut bytes.Buffer
+	err := runReplicateCreate(scaleCmd(&out, &errOut, ""), opts, "my-db", "my-copy", usToEU)
+	if err == nil || !strings.Contains(err.Error(), "points elsewhere") || !strings.Contains(err.Error(), "10.9.9.9") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReplicateCreateReusesMatchingLeftovers(t *testing.T) {
+	// A rerun after a partial create finds both sides already there and matching.
+	src := newFakeSide("us", "prod", []runtime.Object{dbCluster("prod", "my-db", "DBClusterReady")}, repSecret())
+	dst := newFakeSide("eu", "dr", []runtime.Object{dbCluster("dr", "my-copy", "DBClusterReady")})
+	up := newUpstream("prod", "my-db", "my-copy")
+	publishUpstream(up)
+	seedReplication(t, src, up)
+	seedReplication(t, dst, newDownstream("dr", "my-copy", "my-copy-replication-pw", up))
+	opts := replicateOpts(t, src, dst)
+	opts.Yes = true
+	var out, errOut bytes.Buffer
+	if err := runReplicateCreate(scaleCmd(&out, &errOut, ""), opts, "my-db", "my-copy", usToEU); err != nil {
+		t.Fatalf("%v\nstderr:\n%s", err, errOut.String())
+	}
+}
+
 func TestReplicateCreateNoWaitStillWaitsForUpstream(t *testing.T) {
 	// The downstream needs the upstream's details, so even --no-wait must
 	// wait for those; it only skips waiting for the target to catch up.
@@ -582,8 +631,76 @@ func TestReplicatePromoteAlreadyPromoted(t *testing.T) {
 	if err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "my-copy", usToEU); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "already promoted") {
-		t.Errorf("out = %q", out.String())
+	if !strings.Contains(errOut.String(), "already promoted") {
+		t.Errorf("stderr = %q", errOut.String())
+	}
+	if strings.Contains(errOut.String(), "Continue?") {
+		t.Errorf("already promoted must not ask again:\n%s", errOut.String())
+	}
+}
+
+// markPromoted sets control to promote and reports it observed, as after an
+// earlier `promote --no-wait` the operator has since finished.
+func markPromoted(t *testing.T, dst fakeSide) {
+	t.Helper()
+	down := getReplication(t, dst, "dr", "my-copy-downstream")
+	_ = unstructured.SetNestedField(down.Object, "promote", "spec", "downstream", "control")
+	if _, err := dst.dyn.Resource(k8s.ReplicationGVR).Namespace("dr").Update(t.Context(), down, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReplicatePromoteAlreadyPromotedStillCleansUp(t *testing.T) {
+	// A rerun with --cleanup-upstream after `promote --no-wait` must still
+	// remove the source side instead of returning early.
+	src, dst := linkedSides(t)
+	markPromoted(t, dst)
+	opts := replicateOpts(t, src, dst)
+	f := usToEU
+	f.cleanUpstream = true
+	var out, errOut bytes.Buffer
+	if err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "my-copy", f); err != nil {
+		t.Fatalf("%v\nstderr:\n%s", err, errOut.String())
+	}
+	if replicationExists(t, src, "prod", "my-copy-upstream") {
+		t.Error("--cleanup-upstream on an already promoted target left the upstream")
+	}
+}
+
+func TestReplicatePromoteAlreadyPromotedJSON(t *testing.T) {
+	src, dst := linkedSides(t)
+	markPromoted(t, dst)
+	opts := replicateOpts(t, src, dst)
+	opts.Output = output.OutputJSON
+	var out, errOut bytes.Buffer
+	if err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "my-copy", usToEU); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
+	}
+}
+
+func TestReplicatePromoteWaitJSONShowsFinishedObject(t *testing.T) {
+	src, dst := linkedSides(t)
+	opts := replicateOpts(t, src, dst)
+	opts.Yes = true
+	opts.Output = output.OutputJSON
+	finishPromote(t, dst)
+	f := usToEU
+	f.wait = true
+	var out, errOut bytes.Buffer
+	if err := runReplicatePromote(scaleCmd(&out, &errOut, ""), opts, "my-copy", f); err != nil {
+		t.Fatalf("%v\nstderr:\n%s", err, errOut.String())
+	}
+	var got unstructured.Unstructured
+	if err := json.Unmarshal(out.Bytes(), &got.Object); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
+	}
+	// encoding/json decodes numbers as float64.
+	if og, _, _ := unstructured.NestedFieldNoCopy(got.Object, "status", "observedGeneration"); og != float64(2) {
+		t.Errorf("observedGeneration = %v, want 2 (the object after the wait, not the patch result)", og)
 	}
 }
 
@@ -665,6 +782,15 @@ func TestReplicateDeleteAfterCleanupUpstream(t *testing.T) {
 	}
 	if strings.Contains(errOut.String(), "has not been promoted") {
 		t.Errorf("promoted target should not get the read-only warning:\n%s", errOut.String())
+	}
+	// The upstream and the copied secret were already gone: don't claim them.
+	for _, gone := range []string{"my-copy-upstream", "my-copy-replication-pw"} {
+		if strings.Contains(out.String(), gone) {
+			t.Errorf("summary claims %s was removed, but it did not exist: %s", gone, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "my-copy-downstream") {
+		t.Errorf("summary missing the downstream: %s", out.String())
 	}
 }
 
