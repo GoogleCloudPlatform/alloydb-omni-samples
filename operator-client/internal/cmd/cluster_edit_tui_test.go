@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/charmbracelet/x/ansi"
 	"io"
 	"os"
 	"strings"
@@ -479,5 +480,16 @@ func TestEditInteractiveQuitWithoutApplyingSaysSo(t *testing.T) {
 	}
 	if n := writes(dyn); n != 0 {
 		t.Errorf("%d writes, want none", n)
+	}
+}
+
+func TestEditTUITruncateKeepsStylesIntact(t *testing.T) {
+	styled := "\x1b[1mhello world\x1b[0m"
+	got := truncate(styled, 6)
+	if plain := ansi.Strip(got); plain != "hello…" {
+		t.Errorf("visible text = %q, want %q", plain, "hello…")
+	}
+	if !strings.HasSuffix(got, "\x1b[0m") {
+		t.Errorf("truncate dropped the reset sequence, so the style leaks: %q", got)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"io"
 	"os"
 	"sort"
@@ -512,15 +513,16 @@ func (m *editModel) openEditor() tea.Cmd {
 		m.say(true, err.Error())
 		return nil
 	}
-	m.editPath = f.Name()
 	_, err = f.WriteString(tuiEditorHeader + string(body))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
+		os.Remove(f.Name())
 		m.say(true, err.Error())
 		return nil
 	}
+	m.editPath = f.Name()
 	c, _ := editorCommand(m.editPath)
 	return tea.ExecProcess(c, func(err error) tea.Msg { return editorDoneMsg{err: err} })
 }
@@ -824,11 +826,14 @@ func truncate(s string, width int) string {
 	if width <= 0 || lipgloss.Width(s) <= width {
 		return s
 	}
-	r := []rune(s)
-	for len(r) > 0 && lipgloss.Width(string(r)) > width-1 {
-		r = r[:len(r)-1]
+	// Per line, and ANSI-aware: s is often already styled (and wrapped), and
+	// cutting runes off the end would drop the reset sequence and leak the
+	// style into the next line.
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = ansi.Truncate(l, width, "…")
 	}
-	return string(r) + "…"
+	return strings.Join(lines, "\n")
 }
 
 // wrap renders msg in style, broken into lines that fit width.
