@@ -38,6 +38,9 @@ func newClusterEditCommand(opts *GlobalOptions) *cobra.Command {
 			"With -i, edit the spec field by field in a terminal UI instead. Each\n" +
 			"change is checked with the API server (a dry run) as you make it, so\n" +
 			"you can iterate until it's accepted, then apply it.\n\n" +
+			"Both first run the checks `adbo cluster scale` makes (standbys 0-5,\n" +
+			"valid sizes, disks only grow), so those errors show up without a\n" +
+			"round trip to the API server.\n\n" +
 			"To change CPU, memory, disk or standbys, `adbo cluster scale` is simpler.",
 		Example: "  adbo cluster edit my-db\n" +
 			"  adbo cluster edit my-db -i\n" +
@@ -150,6 +153,10 @@ func runClusterEditInEditor(cmd *cobra.Command, opts *GlobalOptions, args []stri
 				return nil
 			}
 			problem = sameIdentity(updated, live)
+		}
+		if problem == nil {
+			// The checks `cluster scale` makes, before the API server sees it.
+			problem = validateSpec(live, updated)
 		}
 		if problem == nil && ctx.Err() != nil {
 			// Ctrl+C in the editor cancels ctx; otherwise every save would
