@@ -70,6 +70,9 @@ func NewRootCommand() *cobra.Command {
 		newClusterCommand(opts),
 		newBackupCommand(opts),
 		newReplicateCommand(opts),
+		newRestoreCommand(opts),
+		newLogsCommand(opts),
+		newVersionCommand(opts),
 	)
 
 	return root
