@@ -138,6 +138,7 @@ const (
 	checkRunning
 	checkOK
 	checkFailed
+	checkInvalid // failed adbo's own spec checks, so it never reached the API server
 )
 
 type (
@@ -322,6 +323,8 @@ func (m *editModel) specKey(key string) tea.Cmd {
 			m.say(false, "Nothing to apply.")
 		case m.check == checkFailed:
 			m.say(true, "The API server rejected these changes; fix the error above first.")
+		case m.check == checkInvalid:
+			m.say(true, "These changes are not valid; fix the error above first.")
 		default:
 			m.mode = modeConfirmApply
 		}
@@ -464,8 +467,15 @@ func (m *editModel) validate() tea.Cmd {
 		m.check, m.checkErr = checkIdle, nil
 		return nil
 	}
+	obj := m.session.object()
+	// The same checks `cluster scale` makes; no need to ask the API server
+	// about a spec adbo already knows is wrong.
+	if err := validateSpec(m.session.live, obj); err != nil {
+		m.check, m.checkErr = checkInvalid, err
+		return nil
+	}
 	m.check, m.checkErr = checkRunning, nil
-	seq, obj, b, ctx := m.checkSeq, m.session.object(), m.backend, m.ctx
+	seq, b, ctx := m.checkSeq, m.backend, m.ctx
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 		defer cancel()
@@ -735,6 +745,8 @@ func (m *editModel) checkLine() string {
 		return st.dim.Render(count + ", checking with the API server...")
 	case checkOK:
 		return st.good.Render("✓ "+count+", accepted by the API server (dry run).") + st.dim.Render(" Press a to apply.")
+	case checkInvalid:
+		return strings.TrimSuffix(wrap(st.bad, "✗ "+count+", not valid: "+m.checkErr.Error(), m.width), "\n")
 	case checkFailed:
 		msg := "✗ " + count + ", rejected by the API server: " + m.checkErr.Error()
 		if apierrors.IsConflict(m.checkErr) {

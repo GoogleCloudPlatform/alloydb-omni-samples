@@ -168,21 +168,21 @@ func TestEditorReopensWithServerError(t *testing.T) {
 	opts, dyn := editEnv(t, readyDBCluster())
 	dyn.PrependReactor("update", "dbclusters", func(a clienttesting.Action) (bool, runtime.Object, error) {
 		obj := a.(clienttesting.UpdateAction).GetObject().(*unstructured.Unstructured)
-		if mem, _, _ := unstructured.NestedString(obj.Object, "spec", "primarySpec", "resources", "memory"); mem == "1Mi" {
+		if mem, _, _ := unstructured.NestedString(obj.Object, "spec", "primarySpec", "resources", "memory"); mem == "3Gi" {
 			return true, nil, apierrors.NewInvalid(schema.GroupKind{Group: "alloydbomni.dbadmin.goog", Kind: "DBCluster"}, "big-db",
-				fieldpath.ErrorList{fieldpath.Invalid(fieldpath.NewPath("spec", "primarySpec", "resources", "memory"), "1Mi", "memory must be at least 1Gi")})
+				fieldpath.ErrorList{fieldpath.Invalid(fieldpath.NewPath("spec", "primarySpec", "resources", "memory"), "3Gi", "memory must be at least 4Gi")})
 		}
 		return false, nil, nil
 	})
 	calls := withEditor(t,
 		func(_ *testing.T, _, content string) string {
-			return strings.Replace(content, "memory: 8Gi", "memory: 1Mi", 1)
+			return strings.Replace(content, "memory: 8Gi", "memory: 3Gi", 1)
 		},
 		func(t *testing.T, _, content string) string {
-			if !strings.Contains(content, "memory must be at least 1Gi") {
+			if !strings.Contains(content, "memory must be at least 4Gi") {
 				t.Errorf("reopened file should show the server error:\n%s", content)
 			}
-			return strings.Replace(content, "memory: 1Mi", "memory: 4Gi", 1)
+			return strings.Replace(content, "memory: 3Gi", "memory: 4Gi", 1)
 		},
 	)
 
@@ -399,5 +399,31 @@ func TestEditorForbiddenSaysWhereToFixRBAC(t *testing.T) {
 		if !strings.Contains(reopened, want) {
 			t.Errorf("the reopened editor should mention %s:\n%s", want, reopened)
 		}
+	}
+}
+
+func TestEditorChecksTheSpecBeforeSendingIt(t *testing.T) {
+	opts, dyn := editEnv(t, readyDBCluster())
+	calls := withEditor(t,
+		func(_ *testing.T, _, content string) string {
+			return strings.Replace(content, "numberOfStandbys: 0", "numberOfStandbys: 9", 1)
+		},
+		func(t *testing.T, _, content string) string {
+			if !strings.Contains(content, "standbys must be between 0 and 5") {
+				t.Errorf("reopened file should say why the spec is invalid:\n%s", content)
+			}
+			return strings.Replace(content, "numberOfStandbys: 9", "numberOfStandbys: 1", 1)
+		},
+	)
+
+	out, err := runCmd(t, newClusterEditCommand(opts), "big-db")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if *calls != 2 {
+		t.Fatalf("editor opened %d times, want 2", *calls)
+	}
+	if n := writes(dyn); n != 1 {
+		t.Errorf("sent %d updates, want 1: the invalid spec must not reach the API server", n)
 	}
 }

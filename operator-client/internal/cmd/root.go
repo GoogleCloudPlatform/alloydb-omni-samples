@@ -43,8 +43,11 @@ func NewRootCommand() *cobra.Command {
 		Short:         "Manage AlloyDB Omni clusters on Kubernetes",
 		SilenceUsage:  true,
 		SilenceErrors: true, // main prints via k8s.Format so messages stay consistent
-		// Runnable so --help prints flags even before subcommands land.
+		// In a terminal, bare `adbo` opens the dashboard; piped, it prints help.
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if isTerminal(cmd.InOrStdin()) && isTerminal(cmd.OutOrStdout()) {
+				return runDashboard(cmd, opts)
+			}
 			return cmd.Help()
 		},
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -73,6 +76,7 @@ func NewRootCommand() *cobra.Command {
 		newRestoreCommand(opts),
 		newLogsCommand(opts),
 		newVersionCommand(opts),
+		newDashboardCommand(opts),
 	)
 
 	return root
