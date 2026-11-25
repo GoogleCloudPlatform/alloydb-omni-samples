@@ -7,6 +7,7 @@ import asyncio
 import argparse
 import csv
 import json
+import os
 import time
 import sys
 import re
@@ -45,7 +46,9 @@ SKIPPED_RECORDS = 0
 
 def save_query_json(record: dict, filename=CAPTURE_FILE):
     """Append a JSON record to a file (newline-delimited JSON format)."""
-    with open(filename, "a", encoding="utf-8") as f:
+    fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        os.fchmod(f.fileno(), 0o600)
         json.dump(record, f)
         f.write("\n")
 
@@ -105,11 +108,19 @@ def make_in_memory_record(data: bytes):
         if msg_type in message_descriptions:
             description = message_descriptions[msg_type]
 
+    if msg_type in ("p", "R"):
+        raw_hex = ""
+        if description is None:
+            description = "PasswordMessage"
+        description = f"{description} (redacted)"
+    else:
+        raw_hex = data.hex()
+
     return {
         "msg_type": msg_type,
         "description": description,
         "sql": sql,
-        "raw_hex": data.hex(),
+        "raw_hex": raw_hex,
     }
 
 
@@ -188,7 +199,8 @@ async def handle_socket(client_reader: StreamReader, client_writer: StreamWriter
             pass
 
 
-async def listen(port: int, real_host: str = REAL_PG_HOST, real_port: int = REAL_PG_PORT):
+async def listen(port: int, real_host: str = REAL_PG_HOST, real_port: int = REAL_PG_PORT,
+                 bind: str = "127.0.0.1"):
     """Start the proxy server."""
     DB_META["db_host"] = real_host
     DB_META["db_port"] = real_port
@@ -196,8 +208,8 @@ async def listen(port: int, real_host: str = REAL_PG_HOST, real_port: int = REAL
     async def handler(client_reader: StreamReader, client_writer: StreamWriter):
         await handle_socket(client_reader, client_writer)
 
-    server = await asyncio.start_server(handler, "0.0.0.0", port)
-    print(f"Transparent PG proxy listening on 0.0.0.0:{port}")
+    server = await asyncio.start_server(handler, bind, port)
+    print(f"Transparent PG proxy listening on {bind}:{port}")
     print(f"Upstream Postgres: {real_host}:{real_port}")
     print(f"Capture file: {CAPTURE_FILE}")
     print("Capture time: per-record (capture_time field)")
@@ -442,7 +454,7 @@ def cmd_capture(args):
     print("=" * 70)
     print("PostgreSQL Query Capture Proxy")
     print("=" * 70)
-    print(f"Listening on:    0.0.0.0:{args.listen_port}")
+    print(f"Listening on:    {args.bind}:{args.listen_port}")
     print(f"Forwarding to:   {args.target_host}:{args.target_port}")
     print(f"Capture file:    {args.capture_file}")
     print("=" * 70)
@@ -455,7 +467,7 @@ def cmd_capture(args):
     print()
     
     try:
-        asyncio.run(listen(args.listen_port, args.target_host, args.target_port))
+        asyncio.run(listen(args.listen_port, args.target_host, args.target_port, bind=args.bind))
     except KeyboardInterrupt:
         print("\nShutting down proxy...")
     finally:
@@ -553,6 +565,11 @@ Examples:
   # Custom capture file
   pgrr capture --capture-file my_queries.json
         """
+    )
+    capture_parser.add_argument(
+        "--bind",
+        default="127.0.0.1",
+        help="Address for proxy to listen on (default: 127.0.0.1)"
     )
     capture_parser.add_argument(
         "--listen-port",

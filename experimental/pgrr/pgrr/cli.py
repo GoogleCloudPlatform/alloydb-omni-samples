@@ -21,13 +21,16 @@ def cli():
               help="Upstream Postgres host that the proxy forwards to.")
 @click.option("--upstream-port", default=proxy.REAL_PG_PORT, show_default=True, type=int,
               help="Upstream Postgres port that the proxy forwards to.")
-def capture(port: int, upstream_host: str, upstream_port: int):
+@click.option("--bind", default="127.0.0.1", show_default=True, type=str,
+              help="Address the proxy listens on. Defaults to loopback; "
+                   "set explicitly (e.g. 0.0.0.0) only on a trusted network.")
+def capture(port: int, upstream_host: str, upstream_port: int, bind: str):
     """Start capture mode (runs the transparent proxy)."""
-    click.echo(f"[capture] starting proxy on 0.0.0.0:{port}")
+    click.echo(f"[capture] starting proxy on {bind}:{port}")
     click.echo(f"[capture] forwarding to upstream: {upstream_host}:{upstream_port}")
     click.echo(f"[capture] writing to capture file: {proxy.CAPTURE_FILE}")
     try:
-        asyncio.run(proxy.listen(port, upstream_host, upstream_port))
+        asyncio.run(proxy.listen(port, upstream_host, upstream_port, bind=bind))
     except KeyboardInterrupt:
         click.echo("\n[capture] shutting down...")
     finally:
