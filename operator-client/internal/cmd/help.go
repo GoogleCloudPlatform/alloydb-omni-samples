@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/version"
+	buildinfo "github.com/GoogleCloudPlatform/alloydb-omni-samples/operator-client/internal/version"
 )
 
 // installHelp makes `adbo`, `adbo --help`, and `adbo help` share one catalog.
@@ -75,7 +75,7 @@ func printCatalog(out io.Writer) error {
 		}
 		fmt.Fprintln(out)
 	}
-	fmt.Fprintf(out, "Client version: %s\n\n", version.Version)
+	fmt.Fprintf(out, "Client version: %s\n\n", buildinfo.Get().Version)
 	fmt.Fprintln(out, "Global flags: -n, --namespace, --context, --kubeconfig, -o, --output, --timeout, -y, --yes")
 	fmt.Fprintln(out, `Use "adbo help <command>" for flags and examples.`)
 	return nil

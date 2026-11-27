@@ -18,7 +18,7 @@ var (
 	FailoverGVR        = schema.GroupVersionResource{Group: group, Version: "v1", Resource: "failovers"}
 	SwitchoverGVR      = schema.GroupVersionResource{Group: group, Version: "v1", Resource: "switchovers"}
 	PgBouncerGVR       = schema.GroupVersionResource{Group: group, Version: "v1", Resource: "pgbouncers"}
-
+	ReplicationGVR     = schema.GroupVersionResource{Group: group, Version: "v1", Resource: "replications"}
 	// Instance is the internal CR that holds primary/standby roles.
 	// Switchover.spec.newPrimary is this object's name.
 	InstanceGVR = schema.GroupVersionResource{Group: internalGroup, Version: "v1", Resource: "instances"}
