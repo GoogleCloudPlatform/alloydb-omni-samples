@@ -40,6 +40,9 @@ type Options struct {
 	Failure  []string                    // phases that mean failed, e.g. {"Failed"}
 	Timeout  time.Duration               // 0 means use only the parent context deadline
 	OnChange func(phase string)          // optional; called when phase changes to a non-empty value
+	// OnTimeout is optional. When the wait hits its deadline, its return value
+	// is appended to the error. Nil keeps the phase-only message.
+	OnTimeout func(obj *unstructured.Unstructured) string
 }
 
 // FailedError is returned when the object enters a Failure phase.
@@ -239,6 +242,16 @@ func wrapDeadline(err error, ctx context.Context, o Options, last *unstructured.
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return err
 	}
-	return fmt.Errorf("timed out waiting for %s to reach %s (last phase %q): %w",
-		o.Name, strings.Join(o.Success, " or "), Phase(last), context.DeadlineExceeded)
+	detail := ""
+	if msg := Reason(last); msg != "" && msg != reasonUnknown {
+		detail = "; " + msg
+	}
+	extra := ""
+	if o.OnTimeout != nil {
+		if ev := strings.TrimSpace(o.OnTimeout(last)); ev != "" {
+			extra = "; events: " + ev
+		}
+	}
+	return fmt.Errorf("timed out waiting for %s to reach %s (last phase %q%s%s): %w",
+		o.Name, strings.Join(o.Success, " or "), Phase(last), detail, extra, context.DeadlineExceeded)
 }

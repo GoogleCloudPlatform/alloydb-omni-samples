@@ -23,7 +23,8 @@ import (
 )
 
 // NewRootCommand builds the adbo command tree and registers global flags.
-// Groups live in cluster.go / backup.go. Do not add verbs here.
+// Group verbs are added in cluster.go, backup.go, and support.go.
+// Top-level commands (connect, doctor, help) are registered here, one line each.
 func NewRootCommand() *cobra.Command {
 	// Default cobra only runs the nearest PersistentPreRunE. Traverse so
 	// root still validates -o / --timeout when a child adds its own hook.
@@ -55,14 +56,14 @@ func NewRootCommand() *cobra.Command {
 					opts.Output, output.OutputTable, output.OutputJSON, output.OutputYAML)
 			}
 			if opts.Timeout < 0 {
-				return fmt.Errorf("--timeout must be greater than or equal to 0")
+				return fmt.Errorf("--timeout must not be negative (0 means wait indefinitely)")
 			}
 			return nil
 		},
 	}
 
 	opts.KubeFlags.AddFlags(root.PersistentFlags())
-	root.PersistentFlags().DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "max wait for async operations that use --wait (does not limit connect/logs)")
+	root.PersistentFlags().DurationVar(&opts.Timeout, "timeout", 30*time.Minute, "max wait for async operations that use --wait (0 = no limit; does not limit connect/logs)")
 	root.PersistentFlags().StringVarP(&opts.Output, "output", "o", output.OutputTable, "output format: table, json or yaml")
 	root.PersistentFlags().BoolVarP(&opts.Yes, "yes", "y", false, "skip confirmation prompts")
 
@@ -73,7 +74,10 @@ func NewRootCommand() *cobra.Command {
 		newRestoreCommand(opts),
 		newLogsCommand(opts),
 		newVersionCommand(opts),
+		newConnectCommand(opts),
+		newDoctorCommand(opts),
 	)
+	installHelp(root)
 
 	return root
 }

@@ -24,6 +24,7 @@ func newClusterCommand(opts *GlobalOptions) *cobra.Command {
 		newClusterDowngradeCommand(opts),
 		newClusterDescribeCommand(opts),
 		newClusterEditCommand(opts),
+		newClusterCredentialsCommand(opts),
 	)
 	return c
 }
