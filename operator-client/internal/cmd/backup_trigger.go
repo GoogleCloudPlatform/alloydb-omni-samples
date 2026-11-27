@@ -266,7 +266,8 @@ func recentEvents(ctx context.Context, c *k8s.Clients, namespace string, names .
 		return ""
 	}
 	var lines []string
-	for i := range list.Items {
+	// The list is oldest first. Walk backwards so a timeout shows the newest events.
+	for i := len(list.Items) - 1; i >= 0; i-- {
 		ev := &list.Items[i]
 		if _, ok := want[ev.InvolvedObject.Name]; !ok {
 			continue

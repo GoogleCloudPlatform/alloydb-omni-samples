@@ -3,9 +3,7 @@ package connect
 import (
 	"io"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 
 	"golang.org/x/term"
 	"k8s.io/client-go/tools/remotecommand"
@@ -62,21 +60,6 @@ func (q *sizeQueue) Next() *remotecommand.TerminalSize {
 
 func (q *sizeQueue) stop() {
 	q.once.Do(func() { close(q.done) })
-}
-
-func (q *sizeQueue) watch() {
-	defer close(q.ch)
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGWINCH)
-	defer signal.Stop(sig)
-	for {
-		select {
-		case <-q.done:
-			return
-		case <-sig:
-			q.publish()
-		}
-	}
 }
 
 func (q *sizeQueue) publish() {

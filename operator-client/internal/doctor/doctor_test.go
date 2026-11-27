@@ -163,6 +163,59 @@ func TestEvaluateSmallNodeFailsResources(t *testing.T) {
 	if got.Status != Fail || !strings.Contains(got.Detail, "arm64") || !strings.Contains(got.Detail, "4.17.0") {
 		t.Fatalf("node-resources: %+v", got)
 	}
+	if !rep.Failed() {
+		t.Fatal("every node failing should fail the install")
+	}
+}
+
+func TestEvaluateMixedNodesWarn(t *testing.T) {
+	rep := Evaluate(Snapshot{
+		ServerGit: "v1.29.0",
+		Nodes: []NodeFact{
+			{
+				Name:   "small",
+				Arch:   "amd64",
+				Kernel: "5.15.0",
+				CPU:    resource.MustParse("1"),
+				Memory: resource.MustParse("2Gi"),
+			},
+			{
+				Name:   "db",
+				Arch:   "amd64",
+				Kernel: "5.15.0",
+				CPU:    resource.MustParse("4"),
+				Memory: resource.MustParse("16Gi"),
+			},
+		},
+		CertCRDs: map[string]bool{
+			"certificates.cert-manager.io":   true,
+			"issuers.cert-manager.io":        true,
+			"clusterissuers.cert-manager.io": true,
+		},
+		CertController:       DepFact{Name: "cert-manager", Found: true, Ready: true, Image: "cm:v1"},
+		CertWebhook:          DepFact{Name: "cert-manager-webhook", Found: true, Ready: true, Image: "cm:v1"},
+		CertWebhookEndpoints: true,
+		OmniCRDPresent:       true,
+		OmniCRDEstablished:   true,
+		Operator: []DepFact{
+			{Name: "local-controller-manager", Found: true, Ready: true, Image: "op:1"},
+			{Name: "fleet-controller-manager", Found: true, Ready: true, Image: "op:1"},
+		},
+		Webhooks: []WebhookFact{{
+			Name:  "local-validating-webhook-configuration",
+			Found: true,
+			Hooks: []HookFact{{CA: true, Service: "local-webhook-service", Namespace: "alloydb-omni-system", Endpoints: true}},
+		}},
+		PortForwardAllowed:  true,
+		DefaultStorageClass: "standard",
+	})
+	got := find(rep, "node-resources")
+	if got.Status != Warn || !strings.Contains(got.Detail, "small") {
+		t.Fatalf("node-resources: %+v", got)
+	}
+	if rep.Failed() {
+		t.Fatal("a mixed pool should not fail doctor")
+	}
 }
 
 type clientOpt func(*[]runtime.Object)

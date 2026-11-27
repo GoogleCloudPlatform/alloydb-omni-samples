@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -225,7 +226,8 @@ func readOnlyPod(ctx context.Context, c *k8s.Clients, namespace, name string) (s
 	if err != nil {
 		return "", err
 	}
-	return cluster.SelectReadOnly(pods, pools)
+	instances, _ := instanceRoles(ctx, c, namespace, name)
+	return cluster.SelectReadOnly(pods, pools, instances)
 }
 
 func listDatabasePods(ctx context.Context, c *k8s.Clients, namespace, name string) ([]cluster.PodInfo, error) {
@@ -238,9 +240,16 @@ func listDatabasePods(ctx context.Context, c *k8s.Clients, namespace, name strin
 	if err != nil {
 		return nil, c.FormatErr(err)
 	}
-	pods := make([]cluster.PodInfo, len(list.Items))
-	for i, pod := range list.Items {
-		pods[i] = cluster.PodInfo{Name: pod.Name, Labels: pod.Labels}
+	var pods []cluster.PodInfo
+	for i := range list.Items {
+		pod := &list.Items[i]
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		pods = append(pods, cluster.PodInfo{Name: pod.Name, Labels: pod.Labels})
 	}
 	return pods, nil
 }

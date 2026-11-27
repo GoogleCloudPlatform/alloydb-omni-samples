@@ -90,9 +90,11 @@ func collectRBAC(ctx context.Context, c *k8s.Clients, snap *Snapshot) {
 		{verb: "list", resource: "secrets", namespace: ns, required: true},
 		{verb: "get", resource: "events", namespace: ns, required: true},
 		{verb: "list", resource: "events", namespace: ns, required: true},
-		{verb: "get", resource: "nodes", required: true},
-		{verb: "get", group: "apiextensions.k8s.io", resource: "customresourcedefinitions", required: true},
-		{verb: "get", group: "admissionregistration.k8s.io", resource: "validatingwebhookconfigurations", required: true},
+		// Cluster-scoped reads are not required. A 403 there is a WARN on the
+		// check that needed them, not an rbac FAIL. Nodes are listed, not gotten.
+		{verb: "list", resource: "nodes", required: false},
+		{verb: "get", group: "apiextensions.k8s.io", resource: "customresourcedefinitions", required: false},
+		{verb: "get", group: "admissionregistration.k8s.io", resource: "validatingwebhookconfigurations", required: false},
 		{verb: "create", resource: "pods", subresource: "portforward", namespace: ns, required: false},
 	}
 	for _, check := range checks {

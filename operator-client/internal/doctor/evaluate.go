@@ -376,6 +376,7 @@ func nodeResults(s Snapshot) []Result {
 		}
 	}
 	var bad []string
+	good := 0
 	for _, n := range s.Nodes {
 		var why []string
 		if n.Arch != "amd64" {
@@ -395,13 +396,21 @@ func nodeResults(s Snapshot) []Result {
 		}
 		if len(why) > 0 {
 			bad = append(bad, n.Name+": "+strings.Join(why, ", "))
+			continue
 		}
+		good++
 	}
 	nodes := Result{Name: "nodes", Status: Pass, Detail: fmt.Sprintf("%d nodes", len(s.Nodes))}
 	if len(bad) > 0 {
+		// A mixed pool still has a place to run the database. Fail only when
+		// every node is too small.
+		status := Warn
+		if good == 0 {
+			status = Fail
+		}
 		return []Result{nodes, {
 			Name:   "node-resources",
-			Status: Fail,
+			Status: status,
 			Detail: strings.Join(bad, "; "),
 			Next:   "schedule database pods onto nodes with at least 2 amd64 CPUs, 8Gi RAM, and kernel 4.18 or later",
 		}}
@@ -415,13 +424,13 @@ func nodeResults(s Snapshot) []Result {
 
 func versionsResult(s Snapshot) Result {
 	if s.OmniCRDForbidden != "" {
-		return Result{Name: "versions", Status: Warn, Detail: s.OmniCRDForbidden + "; client " + version.Version}
+		return Result{Name: "versions", Status: Warn, Detail: s.OmniCRDForbidden + "; client " + version.Get().Version}
 	}
 	if !s.OmniCRDPresent {
-		return Result{Name: "versions", Status: Skip, Detail: "DBCluster CRD is not installed, so versions were not compared. client " + version.Version}
+		return Result{Name: "versions", Status: Skip, Detail: "DBCluster CRD is not installed, so versions were not compared. client " + version.Get().Version}
 	}
 	if s.ClustersForbidden != "" {
-		return Result{Name: "versions", Status: Warn, Detail: s.ClustersForbidden + "; client " + version.Version}
+		return Result{Name: "versions", Status: Warn, Detail: s.ClustersForbidden + "; client " + version.Get().Version}
 	}
 	if s.ClustersError != "" {
 		return Result{Name: "versions", Status: Fail, Detail: s.ClustersError, Next: "kubectl get dbclusters"}
@@ -469,7 +478,7 @@ func versionsResult(s Snapshot) Result {
 	if status == Pass {
 		notes = append([]string{"specs match"}, notes...)
 	}
-	notes = append(notes, "client "+version.Version)
+	notes = append(notes, "client "+version.Get().Version)
 	return Result{Name: "versions", Status: status, Detail: strings.Join(notes, "; ")}
 }
 

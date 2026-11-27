@@ -270,7 +270,7 @@ func SelectPrimary(pods []PodInfo, instances []InstanceInfo, explicit string) (s
 // A single pod that belongs to one of readPoolNames wins.
 // With no read-pool pod, a single Standby pod is used.
 // Zero matches, or more than one match that cannot be narrowed, is an error.
-func SelectReadOnly(pods []PodInfo, readPoolNames []string) (string, error) {
+func SelectReadOnly(pods []PodInfo, readPoolNames []string, instances []InstanceInfo) (string, error) {
 	var matched []string
 	for _, p := range pods {
 		for _, name := range readPoolNames {
@@ -294,6 +294,20 @@ func SelectReadOnly(pods []PodInfo, readPoolNames []string) (string, error) {
 			standbys = append(standbys, p.Name)
 		}
 	}
+	// ha-role is stored on Instance CRs and is not always copied onto pods.
+	if len(standbys) == 0 {
+		for _, inst := range instances {
+			if !strings.EqualFold(inst.Role, RoleStandby) {
+				continue
+			}
+			for _, p := range pods {
+				if podMatchesInstance(p, inst) {
+					standbys = append(standbys, p.Name)
+				}
+			}
+		}
+	}
+	standbys = unique(standbys)
 	if len(standbys) == 1 {
 		return standbys[0], nil
 	}

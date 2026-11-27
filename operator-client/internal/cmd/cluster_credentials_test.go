@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -88,6 +90,38 @@ func TestClusterCredentialsRevealDeclined(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(out.String(), secret) {
 		t.Fatalf("err %v output %s", err, out.String())
+	}
+}
+
+func TestDSNQuotesPassword(t *testing.T) {
+	got := dsn("10.0.0.8", 5432, "postgres", "postgres", `p a\ss'word`)
+	if got != `host=10.0.0.8 port=5432 user=postgres dbname=postgres password='p a\\ss\'word'` {
+		t.Fatalf("dsn: %s", got)
+	}
+}
+
+func TestHostPortStripsIPv6Brackets(t *testing.T) {
+	host, port, ok := hostPort("[::1]", 5432)
+	if !ok || host != "::1" || port != 5432 {
+		t.Fatalf("host %q port %d ok %v", host, port, ok)
+	}
+	joined := net.JoinHostPort(host, strconv.Itoa(int(port)))
+	if joined != "[::1]:5432" {
+		t.Fatalf("joined %s", joined)
+	}
+}
+
+func TestClusterCredentialsMissingEndpoint(t *testing.T) {
+	opts := &GlobalOptions{NewClients: func() (*k8s.Clients, error) {
+		return credentialClients(dbcluster("my-db", false, "Ready"), "secret"), nil
+	}}
+	cmd := newClusterCredentialsCommand(opts)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"my-db"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "no primary endpoint") {
+		t.Fatalf("err %v", err)
 	}
 }
 

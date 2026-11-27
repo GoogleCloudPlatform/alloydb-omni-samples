@@ -61,6 +61,9 @@ func runClusterCredentials(cmd *cobra.Command, opts *GlobalOptions, name string,
 	}
 
 	host, port := primaryHostPort(obj)
+	if host == "" {
+		return fmt.Errorf("cluster %q has no primary endpoint yet", name)
+	}
 	const user, dbname = "postgres", "postgres"
 	password := maskedPassword
 	if reveal {
@@ -84,7 +87,7 @@ func runClusterCredentials(cmd *cobra.Command, opts *GlobalOptions, name string,
 		User:     user,
 		DBName:   dbname,
 		Password: password,
-		DSN:      fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s", host, port, user, dbname, password),
+		DSN:      dsn(host, port, user, dbname, password),
 		URI: (&url.URL{
 			Scheme: "postgres",
 			User:   url.UserPassword(user, password),
@@ -159,10 +162,37 @@ func splitAddress(s string, fallback int32) (string, int32, bool) {
 	return hostPort(s, fallback)
 }
 
+// quoteDSN escapes a libpq keyword value. Spaces, quotes, and backslashes
+// must be wrapped in single quotes, with \ and ' escaped by a backslash.
+func quoteDSN(s string) string {
+	if s == "" || !strings.ContainsAny(s, " '\\") {
+		return s
+	}
+	var b strings.Builder
+	b.WriteByte('\'')
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' || s[i] == '\'' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(s[i])
+	}
+	b.WriteByte('\'')
+	return b.String()
+}
+
+func dsn(host string, port int32, user, dbname, password string) string {
+	return fmt.Sprintf("host=%s port=%d user=%s dbname=%s password=%s",
+		quoteDSN(host), port, quoteDSN(user), quoteDSN(dbname), quoteDSN(password))
+}
+
 func hostPort(s string, fallback int32) (string, int32, bool) {
 	host, port, err := net.SplitHostPort(s)
 	if err != nil {
-		return strings.TrimSpace(s), fallback, strings.TrimSpace(s) != ""
+		h := strings.TrimSpace(s)
+		if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") && len(h) >= 2 {
+			h = h[1 : len(h)-1]
+		}
+		return h, fallback, h != ""
 	}
 	n, err := strconv.Atoi(port)
 	if err != nil || n < 1 || n > 65535 {

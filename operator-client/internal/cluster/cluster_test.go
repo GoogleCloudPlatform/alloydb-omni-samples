@@ -56,26 +56,32 @@ func TestSelectReadOnly(t *testing.T) {
 		"alloydbomni.internal.dbadmin.goog/instance": "my-db-rp-b",
 	}}
 
-	got, err := SelectReadOnly([]PodInfo{primary, standby, pool}, []string{"my-db-rp"})
+	got, err := SelectReadOnly([]PodInfo{primary, standby, pool}, []string{"my-db-rp"}, nil)
 	if err != nil || got != "my-db-rp-0" {
 		t.Fatalf("read pool: %q %v", got, err)
 	}
 
-	got, err = SelectReadOnly([]PodInfo{primary, standby}, nil)
+	got, err = SelectReadOnly([]PodInfo{primary, standby}, nil, nil)
 	if err != nil || got != "standby-0" {
 		t.Fatalf("standby: %q %v", got, err)
 	}
 
-	if _, err := SelectReadOnly([]PodInfo{primary}, nil); err == nil || !strings.Contains(err.Error(), "no read-only pod") {
+	fromInstance := []PodInfo{{Name: "primary-1-0"}, {Name: "standby-1-0"}}
+	got, err = SelectReadOnly(fromInstance, nil, []InstanceInfo{{Name: "standby-1", Role: RoleStandby}})
+	if err != nil || got != "standby-1-0" {
+		t.Fatalf("instance standby: %q %v", got, err)
+	}
+
+	if _, err := SelectReadOnly([]PodInfo{primary}, nil, nil); err == nil || !strings.Contains(err.Error(), "no read-only pod") {
 		t.Fatalf("none: %v", err)
 	}
 
-	if _, err := SelectReadOnly([]PodInfo{pool, otherPool}, []string{"my-db-rp", "my-db-rp-b"}); err == nil || !strings.Contains(err.Error(), "--pod") {
+	if _, err := SelectReadOnly([]PodInfo{pool, otherPool}, []string{"my-db-rp", "my-db-rp-b"}, nil); err == nil || !strings.Contains(err.Error(), "--pod") {
 		t.Fatalf("ambiguous pool: %v", err)
 	}
 
 	second := PodInfo{Name: "standby-1", Labels: map[string]string{LabelHARole: RoleStandby}}
-	if _, err := SelectReadOnly([]PodInfo{standby, second}, nil); err == nil || !strings.Contains(err.Error(), "standby") {
+	if _, err := SelectReadOnly([]PodInfo{standby, second}, nil, nil); err == nil || !strings.Contains(err.Error(), "standby") {
 		t.Fatalf("ambiguous standby: %v", err)
 	}
 }
